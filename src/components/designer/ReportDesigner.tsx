@@ -4,7 +4,10 @@ import {
   ReportElement, 
   BandType, 
   ElementType,
-  ReportBand 
+  ReportBand,
+  ReportDataSource,
+  ActiveAppView, 
+  ReportPageSettings 
 } from '../../types/report';
 import { HistoryEntry } from '../../hooks/useUndoRedo';
 import { 
@@ -52,6 +55,12 @@ import {
   LayoutGrid,
   AlignJustify,
   ArrowRight,
+  Globe,
+  Plus,
+  RefreshCw,
+  Columns,
+  Layout,
+  FileSpreadsheet
 } from 'lucide-react';
 import { FormulaEngine } from '../../services/formulaEngine';
 import { ConditionalFormattingEngine } from '../../services/conditionalFormattingEngine';
@@ -65,7 +74,8 @@ import {
 import { CanvasRulers } from './CanvasRulers';
 import { PrecisionAlignmentBar } from './PrecisionAlignmentBar';
 import { PreviewOptionsBar } from './PreviewOptionsBar';
-import { ActiveAppView, ReportPageSettings } from '../../types/report';
+import { LiveReportRenderer } from './LiveReportRenderer';
+import { ApiEndpointModal } from './ApiEndpointModal';
 
 interface ReportDesignerProps {
   template: ReportTemplate;
@@ -93,6 +103,7 @@ interface ReportDesignerProps {
   onNavigateView?: (view: ActiveAppView) => void;
   onUpdatePageSettings?: (settings: Partial<ReportPageSettings>) => void;
   onOpenExportModal?: () => void;
+  onApplyDataSource?: (newDs: ReportDataSource) => void;
 }
 
 const BAND_ORDER: BandType[] = [
@@ -139,12 +150,14 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
   onNavigateView,
   onUpdatePageSettings,
   onOpenExportModal,
+  onApplyDataSource,
 }) => {
   const [zoom, setZoom] = useState<number>(100);
   const [gridSettings, setGridSettings] = useState<GridSettings>(DEFAULT_GRID_SETTINGS);
   const [collapsedBands, setCollapsedBands] = useState<Record<string, boolean>>({});
   const [isHistoryDropdownOpen, setIsHistoryDropdownOpen] = useState<boolean>(false);
   const [isAutoArrangeMenuOpen, setIsAutoArrangeMenuOpen] = useState<boolean>(false);
+  const [isApiModalOpen, setIsApiModalOpen] = useState<boolean>(false);
   
   // Live Active Guides & Drag HUD state
   const [activeGuides, setActiveGuides] = useState<SnapGuide[]>([]);
@@ -301,7 +314,7 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
         e.preventDefault();
         onUpdateElement({
           ...selectedElement,
-          x: Math.max(0, selectedElement.x + step),
+          x: Math.min(canvasWidth - selectedElement.width, selectedElement.x + step),
         }, `Nudged Right (${step}px)`);
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
@@ -311,36 +324,39 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
         }, `Nudged Up (${step}px)`);
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
+        const bandH = template.bands[selectedElement.band]?.height || 100;
         onUpdateElement({
           ...selectedElement,
-          y: Math.max(0, selectedElement.y + step),
+          y: Math.min(bandH - selectedElement.height, selectedElement.y + step),
         }, `Nudged Down (${step}px)`);
-      } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (onDeleteElement) {
-          e.preventDefault();
-          onDeleteElement(selectedElement.id);
-        }
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
-        if (onDuplicateElement) {
-          e.preventDefault();
-          onDuplicateElement(selectedElement);
-        }
-      } else if (e.key === 'Escape') {
-        onSelectElement(null);
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && onDeleteElement) {
+        e.preventDefault();
+        onDeleteElement(selectedElement.id);
+      } else if (e.key === 'd' && (e.ctrlKey || e.metaKey) && onDuplicateElement) {
+        e.preventDefault();
+        onDuplicateElement(selectedElement);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedElement, gridSettings, onUpdateElement, onDeleteElement, onDuplicateElement, onSelectElement]);
+  }, [
+    selectedElement,
+    gridSettings,
+    canvasWidth,
+    template.bands,
+    onUpdateElement,
+    onDeleteElement,
+    onDuplicateElement,
+  ]);
 
-  // Track cursor coordinates relative to canvas for rulers
+  // Canvas Mouse Move for Rulers
   const handleCanvasMouseMove = (e: React.MouseEvent) => {
     if (!canvasElementRef.current) return;
     const rect = canvasElementRef.current.getBoundingClientRect();
     const scale = zoom / 100;
-    const x = (e.clientX - rect.left) / scale;
-    const y = (e.clientY - rect.top) / scale;
+    const x = Math.max(0, Math.round((e.clientX - rect.left) / scale));
+    const y = Math.max(0, Math.round((e.clientY - rect.top) / scale));
     setMouseCanvasPos({ x, y });
   };
 
@@ -348,30 +364,31 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
     setMouseCanvasPos(null);
   };
 
-  // Zoom Fit helpers
+  // Zoom handlers
   const handleFitWidth = () => {
     if (!canvasScrollRef.current) return;
-    const containerWidth = canvasScrollRef.current.clientWidth - 80;
-    const targetZoom = Math.max(40, Math.min(200, Math.round((containerWidth / canvasWidth) * 100)));
+    const containerW = canvasScrollRef.current.clientWidth - 80;
+    const targetZoom = Math.min(150, Math.max(50, Math.round((containerW / canvasWidth) * 100)));
     setZoom(targetZoom);
   };
 
   const handleFitWindow = () => {
     if (!canvasScrollRef.current) return;
-    const containerWidth = canvasScrollRef.current.clientWidth - 80;
-    const containerHeight = canvasScrollRef.current.clientHeight - 80;
-    const zoomW = (containerWidth / canvasWidth) * 100;
-    const zoomH = (containerHeight / totalCanvasHeight) * 100;
-    const targetZoom = Math.max(40, Math.min(150, Math.round(Math.min(zoomW, zoomH))));
+    const containerW = canvasScrollRef.current.clientWidth - 80;
+    const containerH = canvasScrollRef.current.clientHeight - 80;
+    const zoomW = (containerW / canvasWidth) * 100;
+    const zoomH = (containerH / totalCanvasHeight) * 100;
+    const targetZoom = Math.min(125, Math.max(40, Math.round(Math.min(zoomW, zoomH))));
     setZoom(targetZoom);
   };
 
-  // Element Dragging Handler
+  // Start Dragging Element
   const handleMouseDownElement = (e: React.MouseEvent, el: ReportElement) => {
     e.stopPropagation();
     onSelectElement(el.id);
     onSelectBand(el.band);
 
+    const scale = zoom / 100;
     draggingRef.current = {
       elementId: el.id,
       startX: e.clientX,
@@ -382,63 +399,60 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
       element: el,
     };
 
-    const targetBand = template.bands[el.band] || { type: el.band, name: el.band, height: 80, visible: true };
-    const otherElements = template.elements.filter((other) => other.band === el.band && other.id !== el.id);
-
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (!draggingRef.current) return;
-      const dx = (moveEvent.clientX - draggingRef.current.startX) / (zoom / 100);
-      const dy = (moveEvent.clientY - draggingRef.current.startY) / (zoom / 100);
+      const dx = (moveEvent.clientX - draggingRef.current.startX) / scale;
+      const dy = (moveEvent.clientY - draggingRef.current.startY) / scale;
 
-      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+      if (!draggingRef.current.hasMoved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
         draggingRef.current.hasMoved = true;
       }
 
-      const rawX = draggingRef.current.initialElX + dx;
-      const rawY = draggingRef.current.initialElY + dy;
+      let rawX = draggingRef.current.initialElX + dx;
+      let rawY = draggingRef.current.initialElY + dy;
 
-      // Compute Magnetic Alignment & Grid Snapping
-      const { finalX, finalY, guides, hud } = AlignmentEngine.computeDragAlignment(
-        el,
-        rawX,
-        rawY,
-        el.width,
-        el.height,
-        otherElements,
-        targetBand,
-        canvasWidth,
-        gridSettings,
-        draggingRef.current.initialElX,
-        draggingRef.current.initialElY
+      const bandH = template.bands[el.band]?.height || 100;
+      rawX = Math.max(0, Math.min(canvasWidth - el.width, rawX));
+      rawY = Math.max(0, Math.min(bandH - el.height, rawY));
+
+      const bandElements = template.elements.filter(
+        (other) => other.band === el.band && other.id !== el.id
       );
 
-      setActiveGuides(guides);
-      setActiveDragHud(hud);
+      const snapResult = AlignmentEngine.calculateSnapping(
+        { ...el, x: rawX, y: rawY },
+        bandElements,
+        gridSettings,
+        canvasWidth,
+        bandH
+      );
 
-      const latestEl: ReportElement = {
+      setActiveGuides(snapResult.guides);
+      setActiveDragHud(snapResult.hud);
+
+      onUpdateElement({
         ...el,
-        x: finalX,
-        y: finalY,
-      };
-
-      onUpdateElement(latestEl, `Moved ${el.name || el.type}`);
+        x: snapResult.x,
+        y: snapResult.y,
+      }, `Moved ${el.name || el.type} to (${snapResult.x}, ${snapResult.y})`);
     };
 
     const handleMouseUp = () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
-      draggingRef.current = null;
       setActiveGuides([]);
       setActiveDragHud(null);
+      draggingRef.current = null;
     };
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
   };
 
-  // Element Resizing Handler
+  // Start Resizing Element
   const handleMouseDownResize = (e: React.MouseEvent, el: ReportElement) => {
     e.stopPropagation();
+    const scale = zoom / 100;
     resizingRef.current = {
       elementId: el.id,
       startX: e.clientX,
@@ -449,51 +463,48 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
       element: el,
     };
 
-    const targetBand = template.bands[el.band] || { type: el.band, name: el.band, height: 80, visible: true };
-
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (!resizingRef.current) return;
-      const dx = (moveEvent.clientX - resizingRef.current.startX) / (zoom / 100);
-      const dy = (moveEvent.clientY - resizingRef.current.startY) / (zoom / 100);
+      const dw = (moveEvent.clientX - resizingRef.current.startX) / scale;
+      const dh = (moveEvent.clientY - resizingRef.current.startY) / scale;
 
-      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-        resizingRef.current.hasResized = true;
-      }
-
-      let newW = Math.max(20, resizingRef.current.initialWidth + dx);
-      let newH = Math.max(16, resizingRef.current.initialHeight + dy);
+      let newWidth = Math.max(20, Math.round(resizingRef.current.initialWidth + dw));
+      let newHeight = Math.max(16, Math.round(resizingRef.current.initialHeight + dh));
 
       if (gridSettings.enabled) {
-        newW = AlignmentEngine.snapToGridValue(newW, gridSettings.size);
-        newH = AlignmentEngine.snapToGridValue(newH, gridSettings.size);
+        newWidth = AlignmentEngine.snapToGridValue(newWidth, gridSettings.size);
+        newHeight = AlignmentEngine.snapToGridValue(newHeight, gridSettings.size);
+      }
+
+      const bandH = template.bands[el.band]?.height || 100;
+      newWidth = Math.min(canvasWidth - el.x, newWidth);
+      newHeight = Math.min(bandH - el.y, newHeight);
+
+      if (Math.abs(dw) > 3 || Math.abs(dh) > 3) {
+        resizingRef.current.hasResized = true;
       }
 
       setActiveDragHud({
         x: el.x,
         y: el.y,
-        width: Math.round(newW),
-        height: Math.round(newH),
-        bandName: targetBand.name || targetBand.type,
-        snapMessage: gridSettings.enabled ? `Resized to ${gridSettings.size}px Grid` : 'Resizing',
+        width: newWidth,
+        height: newHeight,
+        snapMessage: `${newWidth} × ${newHeight} px`,
         isSnapped: gridSettings.enabled,
-        deltaX: Math.round(newW - resizingRef.current.initialWidth),
-        deltaY: Math.round(newH - resizingRef.current.initialHeight),
       });
 
-      const latestEl: ReportElement = {
+      onUpdateElement({
         ...el,
-        width: Math.round(newW),
-        height: Math.round(newH),
-      };
-
-      onUpdateElement(latestEl, `Resized ${el.name || el.type}`);
+        width: newWidth,
+        height: newHeight,
+      }, `Resized ${el.name || el.type} (${newWidth}×${newHeight}px)`);
     };
 
     const handleMouseUp = () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
-      resizingRef.current = null;
       setActiveDragHud(null);
+      resizingRef.current = null;
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -587,7 +598,7 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
 
   return (
     <div className="flex-1 bg-slate-950 flex flex-col min-w-0 overflow-hidden select-none relative">
-      {/* 1. TOP DESIGNER TOOLBAR: Undo/Redo, History Stack, Preview Options & Snapping */}
+      {/* 1. TOP DESIGNER TOOLBAR: Undo/Redo, History Stack, Preview Options, API Modal & Snapping */}
       <div className="h-11 bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between text-xs text-slate-300 z-30 shrink-0 shadow-sm">
         {/* Left: Spec info & Undo/Redo buttons */}
         <div className="flex items-center gap-3">
@@ -748,8 +759,8 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                 <div>
-                  <div className="font-semibold text-slate-100">Smart Auto Spacing</div>
-                  <div className="text-[10px] text-slate-400">Even horizontal spacing or wrapped rows</div>
+                  <div className="font-semibold text-slate-100">Smart Band Fit</div>
+                  <div className="text-[10px] text-slate-400">Distribute and adapt band height</div>
                 </div>
               </button>
 
@@ -762,8 +773,8 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
               >
                 <AlignJustify className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
                 <div>
-                  <div className="font-semibold text-slate-100">Horizontal Single Row</div>
-                  <div className="text-[10px] text-slate-400">Distribute equal gaps across canvas margins</div>
+                  <div className="font-semibold text-slate-100">Horizontal Row Distribute</div>
+                  <div className="text-[10px] text-slate-400">Equal horizontal spacing across canvas</div>
                 </div>
               </button>
 
@@ -774,9 +785,9 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
                 }}
                 className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-800 flex items-center gap-2 text-slate-200 transition"
               >
-                <LayoutGrid className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <LayoutGrid className="w-3.5 h-3.5 text-purple-400 shrink-0" />
                 <div>
-                  <div className="font-semibold text-slate-100">Multi-Row Grid Flow</div>
+                  <div className="font-semibold text-slate-100">Auto Grid Matrix</div>
                   <div className="text-[10px] text-slate-400">Balanced wrapped grid with grid snapping</div>
                 </div>
               </button>
@@ -798,7 +809,7 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
           )}
         </div>
 
-        {/* Right: Preview Options, Grid Snapping, & Zoom controls */}
+        {/* Right: Preview Options, API Endpoint modal trigger, Grid Snapping, & Zoom controls */}
         <PreviewOptionsBar
           gridSettings={gridSettings}
           onUpdateGridSettings={setGridSettings}
@@ -812,6 +823,7 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
           onFitWindow={handleFitWindow}
           onNavigateToPreview={onNavigateView ? () => onNavigateView('preview') : undefined}
           onOpenExportModal={onOpenExportModal}
+          onOpenApiModal={() => setIsApiModalOpen(true)}
         />
       </div>
 
@@ -820,7 +832,9 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
         {/* Left / Main: Visual Banded Designer Canvas */}
         <div 
           ref={canvasScrollRef}
-          className="flex-1 overflow-auto p-12 flex justify-center items-start bg-slate-950/90 relative"
+          className={`${
+            gridSettings.viewLayout === 'split' ? 'w-1/2 border-r border-slate-800' : 'flex-1'
+          } overflow-auto p-12 flex justify-center items-start bg-slate-950/90 relative`}
           onClick={() => {
             onSelectElement(null);
             setIsHistoryDropdownOpen(false);
@@ -965,23 +979,6 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
               </div>
             )}
 
-            {/* Visual Watermark Preview on Canvas */}
-            {template.pageSettings.watermark?.enabled && (
-              <div className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden z-0">
-                <span
-                  style={{
-                    opacity: template.pageSettings.watermark.opacity,
-                    color: template.pageSettings.watermark.color,
-                    fontSize: `${template.pageSettings.watermark.fontSize}px`,
-                    transform: `rotate(${template.pageSettings.watermark.rotation}deg)`,
-                  }}
-                  className="font-bold tracking-widest uppercase select-none"
-                >
-                  {template.pageSettings.watermark.text}
-                </span>
-              </div>
-            )}
-
             {/* BAND SECTIONS (Crystal Reports Hierarchy Model) */}
             {BAND_ORDER.map((bandType) => {
               const band = template.bands[bandType];
@@ -1098,124 +1095,74 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
                             isSelected
                               ? 'ring-2 ring-cyan-500 shadow-lg ring-offset-1 bg-cyan-50/20'
                               : gridSettings.showOutlines
-                              ? 'hover:ring-1 hover:ring-slate-400 border border-dashed border-slate-200/80'
+                              ? 'hover:ring-1 hover:ring-cyan-400/50 hover:bg-cyan-50/10'
                               : ''
                           }`}
                         >
-                          {/* Conditional Rules Indicator in Design Mode */}
-                          {!isLivePreview && el.conditionalRules && el.conditionalRules.length > 0 && (
-                            <div
-                              className="absolute top-0.5 right-0.5 z-20 pointer-events-none flex items-center gap-0.5"
-                              title={`${el.conditionalRules.length} Conditional Formatting Rules defined`}
-                            >
-                              <span className={`text-[8px] font-bold px-1 py-0.2 rounded shadow-xs flex items-center gap-0.5 font-mono ${
-                                ruleEval.matchedRules.length > 0
-                                  ? 'bg-amber-400 text-slate-950 ring-1 ring-amber-600'
-                                  : 'bg-slate-700 text-slate-200'
-                              }`}>
-                                <span>⚡</span>
-                                <span>{ruleEval.matchedRules.length > 0 ? 'ACTIVE' : el.conditionalRules.length}</span>
-                              </span>
-                            </div>
-                          )}
-
-                          {/* Dynamic Element Renderers: Design vs Live Data Mode */}
+                          {/* Render Element Body by Type */}
                           {el.type === 'text' && (
-                            <div className="w-full h-full flex items-center leading-tight whitespace-pre-wrap">
-                              {ruleEval.icon === 'alert' && <span className="mr-1">⚠️</span>}
-                              {ruleEval.icon === 'check' && <span className="mr-1 text-emerald-600">✓</span>}
-                              {ruleEval.icon === 'trending-up' && <span className="mr-1 text-emerald-600">▲</span>}
-                              {ruleEval.icon === 'trending-down' && <span className="mr-1 text-rose-600">▼</span>}
-                              {ruleEval.icon === 'flame' && <span className="mr-1">🔥</span>}
-                              {ruleEval.icon === 'zap' && <span className="mr-1">⚡</span>}
-                              <span>{el.content}</span>
+                            <div className="w-full h-full flex items-center justify-start truncate px-1">
+                              {el.content || 'Label'}
                             </div>
                           )}
 
                           {el.type === 'field' && (
-                            <div className="w-full h-full flex items-center font-mono truncate">
-                              {ruleEval.icon === 'alert' && <span className="mr-1">⚠️</span>}
-                              {ruleEval.icon === 'check' && <span className="mr-1 text-emerald-600">✓</span>}
-                              {ruleEval.icon === 'trending-up' && <span className="mr-1 text-emerald-600">▲</span>}
-                              {ruleEval.icon === 'trending-down' && <span className="mr-1 text-rose-600">▼</span>}
-                              {ruleEval.icon === 'zap' && <span className="mr-1">⚡</span>}
+                            <div className="w-full h-full flex items-center justify-start px-1 font-mono text-cyan-800 truncate bg-cyan-50/40 rounded">
                               {isLivePreview ? (
-                                <span className="font-semibold truncate">
-                                  {FormulaEngine.formatValue(
-                                    primaryRow[el.fieldBinding || ''] !== undefined
-                                      ? primaryRow[el.fieldBinding || '']
-                                      : `{${el.fieldBinding}}`,
-                                    el.format,
-                                    el.prefix,
-                                    el.suffix
-                                  )}
-                                </span>
+                                FormulaEngine.formatValue(primaryRow[el.fieldBinding || ''] || '', el.format || 'none')
                               ) : (
-                                <span className="text-cyan-800 font-medium">
-                                  {'{' + (el.fieldBinding || 'field') + '}'}
-                                </span>
+                                <span>[{el.fieldBinding || 'Field'}]</span>
                               )}
                             </div>
                           )}
 
                           {el.type === 'formula' && (
-                            <div className="w-full h-full flex items-center font-mono truncate bg-purple-50/80 px-1 rounded border border-purple-200">
-                              {ruleEval.icon === 'alert' && <span className="mr-1">⚠️</span>}
+                            <div className="w-full h-full flex items-center justify-start px-1 font-mono text-purple-900 bg-purple-50/40 rounded truncate">
                               {isLivePreview ? (
-                                <span className="font-bold text-purple-900">
-                                  {FormulaEngine.formatValue(
-                                    FormulaEngine.evaluate(el.formula || '', primaryRow, dataset),
-                                    el.format,
-                                    el.prefix,
-                                    el.suffix
-                                  )}
-                                </span>
+                                FormulaEngine.formatValue(
+                                  FormulaEngine.evaluate(el.formula || '0', primaryRow, dataset),
+                                  el.format || 'currency'
+                                )
                               ) : (
-                                <span className="text-purple-700 font-semibold">
-                                  @fx: {el.formula || 'formula'}
-                                </span>
+                                <span>fx({el.formula || 'expr'})</span>
                               )}
                             </div>
                           )}
 
                           {el.type === 'kpi' && (
-                            <div className="w-full h-full p-2.5 flex flex-col justify-between">
-                              <div className="flex items-center justify-between text-xs text-slate-500">
-                                <span className="font-semibold">{el.kpiTitle || 'Metric'}</span>
-                                {ruleEval.icon === 'alert' ? (
-                                  <span className="text-rose-500 font-bold">⚠️ ALERT</span>
+                            <div className="w-full h-full p-2.5 rounded-lg border border-slate-200 bg-white flex flex-col justify-between shadow-xs">
+                              <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                                <span className="truncate">{el.kpiTitle || 'Metric'}</span>
+                                <TrendingUp className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                              </div>
+                              <div className="text-base font-black text-slate-900 font-mono">
+                                {isLivePreview ? (
+                                  FormulaEngine.formatValue(
+                                    FormulaEngine.evaluate(el.formula || '0', primaryRow, dataset),
+                                    el.format || 'currency'
+                                  )
                                 ) : (
-                                  <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                                  '$842,500.00'
                                 )}
                               </div>
-                              <div className="text-xl font-bold">
-                                {el.formula
-                                  ? FormulaEngine.formatValue(
-                                      FormulaEngine.evaluate(el.formula, primaryRow, dataset),
-                                      el.format,
-                                      el.prefix,
-                                      el.suffix
-                                    )
-                                  : isLivePreview
-                                  ? FormulaEngine.formatValue(primaryRow[el.kpiValueField || 'gross_revenue'] || 825400, 'currency')
-                                  : '$825,400'}
-                              </div>
                               {el.kpiTrendField && (
-                                <span className="text-[10px] text-emerald-600 font-medium">{el.kpiTrendField}</span>
+                                <div className="text-[9px] text-emerald-600 font-semibold">{el.kpiTrendField}</div>
                               )}
                             </div>
                           )}
 
                           {el.type === 'chart' && (
-                            <div className="w-full h-full p-2 flex flex-col">
-                              <span className="text-[10px] font-bold text-slate-700 mb-1">{el.chartTitle || 'Chart'}</span>
-                              <div className="flex-1 w-full min-h-0 pointer-events-none">
+                            <div className="w-full h-full p-2 bg-white rounded-lg border border-slate-200 flex flex-col shadow-xs">
+                              <div className="text-[10px] font-bold text-slate-700 mb-1 flex items-center justify-between">
+                                <span className="truncate">{el.chartTitle || 'Chart'}</span>
+                                <span className="text-[9px] font-mono text-slate-400 uppercase">{el.chartType || 'bar'}</span>
+                              </div>
+                              <div className="flex-1 w-full min-h-[40px] pointer-events-none">
                                 <ResponsiveContainer width="100%" height="100%">
-                                  <BarChart data={dataset.slice(0, 6)}>
-                                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                                    <XAxis dataKey="region" tick={{ fontSize: 9 }} />
-                                    <YAxis tick={{ fontSize: 9 }} />
-                                    <Bar dataKey="gross_revenue" fill="#0284c7" radius={[4, 4, 0, 0]} />
+                                  <BarChart data={dataset.slice(0, 5)}>
+                                    <CartesianGrid strokeDasharray="2 2" opacity={0.2} />
+                                    <XAxis dataKey={el.xAxisField || 'region'} tick={{ fontSize: 8 }} />
+                                    <Bar dataKey={el.yAxisFields?.[0] || 'gross_revenue'} fill="#0284c7" radius={[2, 2, 0, 0]} />
                                   </BarChart>
                                 </ResponsiveContainer>
                               </div>
@@ -1223,244 +1170,148 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
                           )}
 
                           {el.type === 'table' && (
-                            <div className="w-full h-full border border-slate-300 rounded overflow-hidden flex flex-col text-xs">
-                              {/* Table Header */}
-                              <div className="bg-slate-100 border-b border-slate-300 flex font-semibold text-slate-700 py-1.5 px-2">
-                                {el.columns?.map((c) => (
-                                  <div key={c.id} style={{ width: `${c.width}%` }} className={`text-${c.align || 'left'} truncate pr-1`}>
-                                    {c.header}
+                            <div className="w-full h-full bg-white border border-slate-200 rounded-lg overflow-hidden flex flex-col text-[10px] shadow-xs">
+                              <div className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 px-2 py-1 flex items-center justify-between">
+                                <span>Banded Table Grid ({el.columns?.length || 4} Cols)</span>
+                                <span className="text-[9px] font-mono text-slate-400">{dataset.length} Rows</span>
+                              </div>
+                              <div className="p-1 flex-1 overflow-hidden font-mono divide-y divide-slate-100">
+                                {dataset.slice(0, 3).map((r, ri) => (
+                                  <div key={ri} className="flex items-center justify-between py-1 px-1">
+                                    <span className="text-slate-800 truncate">{r.customer_name || r.item_name || 'Customer Item'}</span>
+                                    <span className="text-cyan-700 font-bold">{FormulaEngine.formatValue(r.gross_revenue || r.amount || 1200, 'currency')}</span>
                                   </div>
                                 ))}
                               </div>
-                              {/* Preview Sample Rows */}
-                              {(isLivePreview ? dataset.slice(0, 3) : [primaryRow]).map((row, rIdx) => (
-                                <div key={rIdx} className="flex py-1.5 px-2 text-slate-600 border-b border-slate-100 bg-white">
-                                  {el.columns?.map((c) => {
-                                    const rawVal = row[c.field];
-                                    const colRuleEval = applyRules && c.conditionalRules
-                                      ? ConditionalFormattingEngine.evaluateColumnRules(c, rawVal, row, dataset)
-                                      : { style: {} };
-
-                                    return (
-                                      <div
-                                        key={c.id}
-                                        style={{
-                                          width: `${c.width}%`,
-                                          color: colRuleEval.style.color,
-                                          backgroundColor: colRuleEval.style.backgroundColor,
-                                          fontWeight: colRuleEval.style.fontWeight as any,
-                                          fontStyle: colRuleEval.style.fontStyle as any,
-                                        }}
-                                        className={`text-${c.align || 'left'} font-mono truncate pr-1 px-1 rounded`}
-                                      >
-                                        {FormulaEngine.formatValue(rawVal, c.format)}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ))}
-                              {/* Subtotal Row */}
-                              {el.showTableFooter && (
-                                <div className="mt-auto bg-slate-50 border-t border-slate-200 flex font-bold text-slate-800 py-1 px-2">
-                                  <div style={{ width: '40%' }}>SUMMARY TOTAL</div>
-                                  <div style={{ width: '60%' }} className="text-right font-mono text-cyan-700">$825,400.00</div>
-                                </div>
-                              )}
                             </div>
                           )}
 
                           {el.type === 'qrcode' && (
-                            <div className="w-full h-full flex items-center justify-center p-1 bg-white border border-slate-200">
-                              <QrIcon className="w-full h-full text-slate-900" />
+                            <div className="w-full h-full flex flex-col items-center justify-center p-1 bg-white border border-slate-200 rounded">
+                              <QrIcon className="w-8 h-8 text-slate-800" />
+                              <span className="text-[7px] font-mono text-slate-400 mt-0.5">AUDIT-QR</span>
                             </div>
                           )}
 
-                          {/* Resize handle when selected */}
+                          {el.type === 'line' && (
+                            <hr className="w-full border-t border-slate-400" />
+                          )}
+
+                          {el.type === 'shape' && (
+                            <div className="w-full h-full bg-slate-100 border border-slate-300 rounded" />
+                          )}
+
+                          {/* Resize Handle at Bottom-Right */}
                           {isSelected && (
                             <div
                               onMouseDown={(e) => handleMouseDownResize(e, el)}
-                              className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-cyan-600 cursor-se-resize rounded-tl z-30 shadow flex items-center justify-center"
-                              title="Drag to resize element (snaps to grid)"
+                              className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-cyan-600 rounded-tl-md cursor-se-resize flex items-center justify-center text-white z-30 shadow"
+                              title="Drag to resize component"
                             >
-                              <div className="w-1 h-1 bg-white rounded-full" />
+                              <div className="w-1.5 h-1.5 border-r border-b border-white" />
                             </div>
                           )}
                         </div>
                       );
                     })}
 
-                  {/* Band Height Resize Handle (Drag to adjust band height) */}
+                  {/* Band Height Resize Divider Bar */}
                   <div
                     onMouseDown={(e) => handleMouseDownBandResize(e, bandType)}
-                    className="absolute bottom-0 left-0 right-0 h-2 bg-transparent hover:bg-cyan-500/30 cursor-row-resize z-20 transition-colors"
-                    title={`Drag to resize ${band.name || bandType} height`}
-                  />
+                    className="absolute -bottom-1.5 left-0 right-0 h-3 cursor-row-resize z-20 flex items-center justify-center group/resize"
+                    title={`Drag to resize ${band.name || bandMeta.label} height`}
+                  >
+                    <div className="w-16 h-1 rounded-full bg-slate-300 group-hover/resize:bg-cyan-500 transition-colors shadow-xs" />
+                  </div>
                 </div>
               );
             })}
           </div>
-
-          {/* Precision Alignment Bar (Floating at bottom-center when element is selected) */}
-          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
-            <PrecisionAlignmentBar
-              selectedElement={selectedElement}
-              activeBand={selectedBandObj}
-              canvasWidth={canvasWidth}
-              gridSettings={gridSettings}
-              onUpdateElement={onUpdateElement}
-              onDeleteElement={onDeleteElement || (() => {})}
-              onDuplicateElement={onDuplicateElement || (() => {})}
-              onAutoArrangeBand={handleAutoArrange}
-            />
-          </div>
         </div>
 
-        {/* Right Pane: SPLIT VIEW Live Report Synchronization */}
+        {/* Right Pane: ⚡ REAL-TIME INSTANT IMPACT SPLIT PREVIEW */}
         {gridSettings.viewLayout === 'split' && (
-          <div className="w-1/2 border-l border-slate-800 bg-slate-900/90 flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
+          <div className="w-1/2 bg-slate-950 flex flex-col overflow-hidden animate-in slide-in-from-right duration-150">
             {/* Split View Header */}
-            <div className="p-3 border-b border-slate-800 bg-slate-950 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="font-bold text-xs text-slate-200">Real-Time Render Preview</span>
-                <span className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 px-1.5 py-0.5 rounded font-mono">
-                  Sync Active
+            <div className="h-10 bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2 font-bold text-slate-200">
+                <Columns className="w-4 h-4 text-purple-400" />
+                <span>⚡ Live Report Preview</span>
+                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Instant Impact
                 </span>
-                {gridSettings.previewWatermark && gridSettings.previewWatermark !== 'none' && (
-                  <span className="text-[10px] bg-amber-950 text-amber-300 border border-amber-800 px-1.5 py-0.5 rounded font-mono">
-                    {gridSettings.previewWatermark}
-                  </span>
-                )}
               </div>
               <div className="flex items-center gap-2">
-                {onNavigateView && (
-                  <button
-                    onClick={() => onNavigateView('preview')}
-                    className="text-xs px-2.5 py-1 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 hover:bg-cyan-900 transition flex items-center gap-1 font-semibold"
-                  >
-                    <span>Full Preview</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </button>
-                )}
+                <button
+                  onClick={() => setIsApiModalOpen(true)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 font-semibold transition text-[11px]"
+                  title="Configure live API endpoint"
+                >
+                  <Globe className="w-3 h-3" />
+                  <span>API Options</span>
+                </button>
+                <button
+                  onClick={() => {
+                    if (onOpenExportModal) onOpenExportModal();
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded bg-purple-900/80 hover:bg-purple-800 text-purple-200 font-semibold transition text-[11px]"
+                >
+                  <FileSpreadsheet className="w-3 h-3 text-purple-300" />
+                  <span>PDF Export</span>
+                </button>
                 <button
                   onClick={() => setGridSettings((prev) => ({ ...prev, viewLayout: 'single' }))}
-                  className="text-slate-400 hover:text-slate-200 text-xs px-2 py-0.5 rounded hover:bg-slate-800"
+                  className="text-slate-400 hover:text-slate-200 p-1"
+                  title="Close split view"
                 >
-                  Close Split View
+                  ✕
                 </button>
               </div>
             </div>
 
-            {/* Split View Render Body */}
-            <div className="flex-1 overflow-y-auto p-6 flex justify-center bg-slate-950">
-              <div 
-                style={{ width: `${canvasWidth * 0.85}px` }}
-                className="bg-white text-slate-900 rounded-xl shadow-xl p-6 flex flex-col space-y-4 border border-slate-200 relative overflow-hidden"
-              >
-                {/* Watermark in Split View */}
-                {((gridSettings.previewWatermark && gridSettings.previewWatermark !== 'none') || template.pageSettings.watermark?.enabled) && (
-                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden z-0 select-none">
-                    <span
-                      style={{
-                        opacity: 0.1,
-                        color: '#dc2626',
-                        fontSize: '64px',
-                        transform: 'rotate(-35deg)',
-                      }}
-                      className="font-extrabold tracking-widest uppercase border-4 border-red-600/20 px-6 py-2 rounded-2xl"
-                    >
-                      {gridSettings.previewWatermark && gridSettings.previewWatermark !== 'none'
-                        ? gridSettings.previewWatermark
-                        : template.pageSettings.watermark?.text || 'DRAFT'}
-                    </span>
-                  </div>
-                )}
-
-                {/* Header preview */}
-                <div className="border-b border-slate-200 pb-4 flex justify-between items-start relative z-10">
-                  <div>
-                    <h2 className="text-xl font-bold text-slate-900">{template.name}</h2>
-                    <p className="text-xs text-slate-500">{template.description}</p>
-                  </div>
-                  <div className="text-right text-xs text-slate-400 font-mono">
-                    <div>DATE: {new Date().toLocaleDateString()}</div>
-                    <div>PAGE 1 OF 1</div>
-                  </div>
-                </div>
-
-                {/* KPI Cards summary */}
-                <div className="grid grid-cols-3 gap-3 relative z-10">
-                  <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
-                    <div className="text-[10px] font-semibold text-slate-500 uppercase">Gross Revenue</div>
-                    <div className="text-lg font-bold text-slate-900 font-mono">
-                      {FormulaEngine.formatValue(
-                        dataset.reduce((sum, r) => sum + (Number(r.gross_revenue) || 0), 0) || 825400,
-                        'currency'
-                      )}
-                    </div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
-                    <div className="text-[10px] font-semibold text-slate-500 uppercase">Net Profit</div>
-                    <div className="text-lg font-bold text-emerald-600 font-mono">
-                      {FormulaEngine.formatValue(
-                        dataset.reduce((sum, r) => sum + (Number(r.net_profit) || 0), 0) || 312800,
-                        'currency'
-                      )}
-                    </div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
-                    <div className="text-[10px] font-semibold text-slate-500 uppercase">Total Records</div>
-                    <div className="text-lg font-bold text-slate-900 font-mono">{dataset.length} Rows</div>
-                  </div>
-                </div>
-
-                {/* Live Chart Preview */}
-                <div className="h-44 border border-slate-200 rounded-lg p-3 bg-white relative z-10">
-                  <div className="text-xs font-bold text-slate-700 mb-2">Regional Performance Breakdown</div>
-                  <ResponsiveContainer width="100%" height="80%">
-                    <BarChart data={dataset.slice(0, 5)}>
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                      <XAxis dataKey="region" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 10 }} />
-                      <Bar dataKey="gross_revenue" fill="#0284c7" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-
-                {/* Table Data Preview */}
-                <div className="border border-slate-200 rounded-lg overflow-hidden text-xs relative z-10">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200">
-                      <tr>
-                        <th className="p-2">Invoice / ID</th>
-                        <th className="p-2">Customer / Entity</th>
-                        <th className="p-2">Region</th>
-                        <th className="p-2 text-right">Revenue</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {dataset.slice(0, gridSettings.previewRecordLimit || 6).map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-50">
-                          <td className="p-2 font-mono text-cyan-800">{row.order_number || `#INV-${1000 + i}`}</td>
-                          <td className="p-2 font-medium text-slate-800">{row.customer_name || row.employee_name || 'Enterprise Client'}</td>
-                          <td className="p-2">
-                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 font-semibold">
-                              {row.region || row.department || 'Global'}
-                            </span>
-                          </td>
-                          <td className="p-2 text-right font-mono font-semibold text-slate-900">
-                            {FormulaEngine.formatValue(row.gross_revenue || row.total_compensation || 12400, 'currency')}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+            {/* Split View Render Body: Reactive LiveReportRenderer */}
+            <div className="flex-1 overflow-y-auto p-6 flex justify-center bg-slate-950/90">
+              <div className="w-full max-w-2xl">
+                <LiveReportRenderer
+                  template={template}
+                  dataset={dataset}
+                  recordLimit={gridSettings.previewRecordLimit || 25}
+                  watermark={gridSettings.previewWatermark || 'none'}
+                  theme={gridSettings.previewTheme || 'corporate-blue'}
+                  compact={true}
+                />
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {/* 3. PRECISION ALIGNMENT DOCK BAR */}
+      <PrecisionAlignmentBar
+        selectedElement={selectedElement}
+        allElements={template.elements}
+        activeBand={activeBand}
+        canvasWidth={canvasWidth}
+        bandHeight={selectedBandObj?.height || 100}
+        onUpdateElement={onUpdateElement}
+        onUpdateMultipleElements={onUpdateMultipleElements}
+        onAutoArrange={handleAutoArrange}
+      />
+
+      {/* 4. REST & OPTIONS API ENDPOINT MODAL (Direct Option in Visual Designer) */}
+      <ApiEndpointModal
+        isOpen={isApiModalOpen}
+        onClose={() => setIsApiModalOpen(false)}
+        activeDataSource={template.dataSources[0]}
+        onApplyDataSource={(newDs) => {
+          if (onApplyDataSource) {
+            onApplyDataSource(newDs);
+          } else {
+            onUpdateBands(template.bands, `Bound to API: ${newDs.name}`);
+          }
+        }}
+      />
     </div>
   );
 };

@@ -103,14 +103,20 @@ export default function App() {
   const selectedElement = activeTemplate.elements.find((el) => el.id === selectedElementId) || null;
 
   // Add element from palette with history tracking
-  const handleAddElement = (type: ElementType, band: BandType) => {
+  const handleAddElement = (type: ElementType, band: BandType, fieldBinding?: string) => {
     const newId = `el-${type}-${Date.now()}`;
     const fields = activeTemplate.dataSources[0]?.fields || [];
     
+    // Find numeric fields for metrics/charts
+    const numericFields = fields.filter((f) => f.type === 'number' || f.type === 'currency');
+    const firstNumeric = numericFields[0]?.name || (fields[2]?.name || 'gross_revenue');
+    const stringFields = fields.filter((f) => f.type === 'string');
+    const firstString = stringFields[0]?.name || fields[0]?.name || 'customer_name';
+
     let newElement: ReportElement = {
       id: newId,
       type,
-      name: `${type.toUpperCase()} Component`,
+      name: fieldBinding ? `${fieldBinding} Field` : `${type.toUpperCase()} Component`,
       band,
       x: 24,
       y: 12,
@@ -127,22 +133,31 @@ export default function App() {
     if (type === 'text') {
       newElement.content = 'New Report Label';
     } else if (type === 'field') {
-      newElement.fieldBinding = fields[0]?.name || 'customer_name';
+      newElement.fieldBinding = fieldBinding || fields[0]?.name || 'customer_name';
     } else if (type === 'formula') {
-      newElement.formula = 'SUM(gross_revenue)';
+      newElement.formula = `SUM(${firstNumeric})`;
       newElement.format = 'currency';
     } else if (type === 'kpi') {
-      newElement.kpiTitle = 'New KPI Metric';
-      newElement.formula = 'SUM(gross_revenue)';
+      newElement.kpiTitle = `${firstNumeric.replace(/_/g, ' ')} Metric`;
+      newElement.formula = `SUM(${firstNumeric})`;
       newElement.format = 'currency';
-      newElement.kpiTrendField = '+12.5% vs Last Period';
+      newElement.kpiTrendField = '+12.5% Live';
     } else if (type === 'chart') {
       newElement.chartType = 'bar';
-      newElement.chartTitle = 'Revenue Breakdown';
-      newElement.xAxisField = 'region';
-      newElement.yAxisFields = ['gross_revenue'];
+      newElement.chartTitle = 'Metric Distribution';
+      newElement.xAxisField = firstString;
+      newElement.yAxisFields = [firstNumeric];
     } else if (type === 'table') {
-      newElement.columns = [
+      const topCols = fields.slice(0, 4);
+      newElement.columns = topCols.length > 0 ? topCols.map((c, idx) => ({
+        id: `col-${idx + 1}`,
+        header: c.displayName,
+        field: c.name,
+        width: Math.floor(100 / topCols.length),
+        align: c.type === 'currency' || c.type === 'number' ? 'right' : 'left',
+        format: c.type === 'currency' ? 'currency' : c.type === 'number' ? 'number' : 'text',
+        summaryType: c.type === 'currency' || c.type === 'number' ? 'sum' : 'none',
+      })) : [
         { id: '1', header: 'Invoice #', field: 'order_number', width: 20, align: 'left' },
         { id: '2', header: 'Customer', field: 'customer_name', width: 35, align: 'left' },
         { id: '3', header: 'Category', field: 'product_category', width: 25, align: 'left' },
@@ -158,7 +173,7 @@ export default function App() {
     setTemplate((prev) => ({
       ...prev,
       elements: [...prev.elements, newElement],
-    }), `Added ${type.toUpperCase()} to ${band}`);
+    }), `Added ${fieldBinding || type.toUpperCase()} to ${band}`);
 
     setSelectedElementId(newId);
   };
@@ -242,6 +257,23 @@ export default function App() {
       ...prev,
       dataSources: prev.dataSources.map((ds) => (ds.id === updatedDs.id ? updatedDs : ds)),
     }), `Updated Data Source: ${updatedDs.name}`);
+  };
+
+  // Apply new or configured API / Database data source as primary
+  const handleApplyDataSource = (newDs: ReportDataSource) => {
+    setTemplate((prev) => {
+      const existingIdx = prev.dataSources.findIndex((d) => d.id === newDs.id);
+      let updatedList = [...prev.dataSources];
+      if (existingIdx >= 0) {
+        updatedList[existingIdx] = newDs;
+      } else {
+        updatedList = [newDs, ...updatedList];
+      }
+      return {
+        ...prev,
+        dataSources: updatedList,
+      };
+    }, `Connected API Data Source: ${newDs.name}`);
   };
 
   // Switch template
@@ -398,6 +430,8 @@ export default function App() {
             <ElementPalette
               onAddElement={handleAddElement}
               activeBand={activeBand}
+              dataSource={activeTemplate.dataSources[0]}
+              onNavigateToDataSources={() => setCurrentView('datasources')}
             />
 
             {/* Center: Banded Visual Canvas */}
@@ -459,11 +493,17 @@ export default function App() {
           />
         )}
 
-        {/* 4. MYSQL DATABASE STUDIO */}
+        {/* 4. DATA SOURCES & API STUDIO */}
         {currentView === 'datasources' && (
           <DataSourceManager
             template={activeTemplate}
             onUpdateDataSource={handleUpdateDataSource}
+            onNewTemplateFromEndpoint={(newTpl) => {
+              setTemplates((prev) => [newTpl, ...prev]);
+              resetHistory(newTpl, `Generated API Report: ${newTpl.name}`);
+              setCurrentView('designer');
+            }}
+            onNavigateView={setCurrentView}
             liveStreaming={liveStreaming}
             onToggleLiveStream={() => setLiveStreaming(!liveStreaming)}
           />

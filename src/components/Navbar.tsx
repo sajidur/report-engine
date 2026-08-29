@@ -149,7 +149,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>Live Analytics</span>
           </button>
 
-          {/* MySQL Studio Tab */}
+          {/* Data Sources & API Studio Tab */}
           <button
             id="nav-tab-datasources"
             onClick={() => onViewChange('datasources')}
@@ -160,7 +160,10 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             <Database className="w-3.5 h-3.5" />
-            <span>MySQL Studio</span>
+            <span>Data Sources & API</span>
+            <span className="bg-cyan-950 text-cyan-300 text-[10px] px-1 py-0.2 rounded font-mono border border-cyan-800">
+              REST / SQL
+            </span>
           </button>
 
           {/* Developer SDK Tab */}
