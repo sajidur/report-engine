@@ -1,0 +1,6 @@
+{
+  "name": "Enterprise Report Engine & SDK Studio",
+  "description": "Visual Crystal Reports-style designer, real-time analytics engine, customizable PDF exporter, and embeddable React, Node.js & .NET Web API SDK for enterprise ecosystems.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
