@@ -203,6 +203,9 @@ export interface ReportDataSource {
   type: 'mysql' | 'rest' | 'stream' | 'static';
   query?: string; // SQL SELECT query
   endpoint?: string;
+  endpointUrl?: string; // legacy alias used by API modal
+  httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
+  jsonPath?: string;
   parametersMap?: Record<string, string>;
   fields: {
     name: string;

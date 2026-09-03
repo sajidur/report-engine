@@ -4,7 +4,7 @@ import {
   ReportBand, 
   BandType 
 } from '../../types/report';
-import { AlignmentEngine, GridSettings } from '../../services/alignmentEngine';
+import { AlignmentEngine, GridSettings, DEFAULT_GRID_SETTINGS } from '../../services/alignmentEngine';
 import { 
   AlignLeft, 
   AlignCenter, 
@@ -28,7 +28,7 @@ interface PrecisionAlignmentBarProps {
   selectedElement: ReportElement | null;
   activeBand: ReportBand | null;
   canvasWidth: number;
-  gridSettings: GridSettings;
+  gridSettings?: GridSettings;
   onUpdateElement: (el: ReportElement, actionDesc?: string) => void;
   onDeleteElement: (id: string) => void;
   onDuplicateElement: (el: ReportElement) => void;
@@ -39,7 +39,7 @@ export const PrecisionAlignmentBar: React.FC<PrecisionAlignmentBarProps> = ({
   selectedElement,
   activeBand,
   canvasWidth,
-  gridSettings,
+  gridSettings = DEFAULT_GRID_SETTINGS,
   onUpdateElement,
   onDeleteElement,
   onDuplicateElement,

@@ -462,6 +462,12 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
               className="rounded bg-slate-900 border-slate-700 text-cyan-600"
             />
           </div>
+
+          <div className="pt-2 border-t border-slate-800">
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              Table conditional rules below style whole rows. Column rules still style individual cells, so you can design both row-level and field-level highlights together.
+            </p>
+          </div>
         </div>
       )}
 

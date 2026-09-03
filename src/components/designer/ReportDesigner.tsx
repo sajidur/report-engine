@@ -419,12 +419,18 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
         (other) => other.band === el.band && other.id !== el.id
       );
 
-      const snapResult = AlignmentEngine.calculateSnapping(
+      const snapResult = AlignmentEngine.computeDragAlignment(
         { ...el, x: rawX, y: rawY },
+        rawX,
+        rawY,
+        el.width,
+        el.height,
         bandElements,
-        gridSettings,
+        template.bands[el.band],
         canvasWidth,
-        bandH
+        gridSettings,
+        draggingRef.current.initialElX,
+        draggingRef.current.initialElY
       );
 
       setActiveGuides(snapResult.guides);
@@ -432,9 +438,9 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
 
       onUpdateElement({
         ...el,
-        x: snapResult.x,
-        y: snapResult.y,
-      }, `Moved ${el.name || el.type} to (${snapResult.x}, ${snapResult.y})`);
+        x: snapResult.finalX,
+        y: snapResult.finalY,
+      }, `Moved ${el.name || el.type} to (${snapResult.finalX}, ${snapResult.finalY})`);
     };
 
     const handleMouseUp = () => {
@@ -1293,6 +1299,7 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
         allElements={template.elements}
         activeBand={activeBand}
         canvasWidth={canvasWidth}
+        gridSettings={gridSettings}
         bandHeight={selectedBandObj?.height || 100}
         onUpdateElement={onUpdateElement}
         onUpdateMultipleElements={onUpdateMultipleElements}

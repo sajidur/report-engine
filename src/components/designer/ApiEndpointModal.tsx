@@ -201,7 +201,7 @@ export const ApiEndpointModal: React.FC<ApiEndpointModalProps> = ({
       fields: inferredFields.map((f) => ({
         name: f.name,
         type: (f.type as any) || 'string',
-        label: f.name.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
+        displayName: f.name.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
       })),
     };
 

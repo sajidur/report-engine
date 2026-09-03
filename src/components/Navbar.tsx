@@ -229,6 +229,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             </select>
           </div>
 
+          {/* Start New Report */}
+          <button
+            id="start-new-report-btn"
+            onClick={onNewTemplate}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-white shadow-md transition"
+            title="Start a new blank report design"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>New Report</span>
+          </button>
+
           {/* Real-Time Live Streaming Toggle */}
           <button
             id="live-stream-toggle-btn"

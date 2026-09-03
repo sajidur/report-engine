@@ -278,15 +278,40 @@ export const LiveReportRenderer: React.FC<LiveReportRendererProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                {dataset.map((row, rIdx) => (
-                  <tr key={rIdx} className="hover:bg-slate-50 transition-colors">
+                {dataset.map((row, rIdx) => {
+                  const rowRuleEval =
+                    el.conditionalRules && el.conditionalRules.length > 0
+                      ? ConditionalFormattingEngine.evaluateElementRules(el, row, dataset)
+                      : null;
+
+                  if (rowRuleEval?.isHidden) return null;
+
+                  return (
+                  <tr
+                    key={rIdx}
+                    className="transition-colors"
+                    style={{
+                      backgroundColor: rowRuleEval?.style.backgroundColor,
+                      color: rowRuleEval?.style.color,
+                      fontWeight: rowRuleEval?.style.fontWeight,
+                      fontStyle: rowRuleEval?.style.fontStyle,
+                      textDecoration: rowRuleEval?.style.textDecoration,
+                    }}
+                  >
                     {cols.map((c) => {
                       const val = row[c.field];
                       const formatted = FormulaEngine.formatValue(val, c.format || 'none');
+                      const cellRuleEval =
+                        c.conditionalRules && c.conditionalRules.length > 0
+                          ? ConditionalFormattingEngine.evaluateColumnRules(c, val, row, dataset)
+                          : null;
                       return (
                         <td
                           key={c.id}
-                          style={{ textAlign: c.align || 'left' }}
+                          style={{
+                            textAlign: c.align || 'left',
+                            ...(cellRuleEval?.style || {}),
+                          }}
                           className="p-2 text-slate-800 truncate"
                         >
                           {formatted}
@@ -294,7 +319,8 @@ export const LiveReportRenderer: React.FC<LiveReportRendererProps> = ({
                       );
                     })}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
               {cols.some((c) => c.summaryType && c.summaryType !== 'none') && (
                 <tfoot className="bg-slate-50 font-bold border-t-2 border-slate-200 text-[11px]">

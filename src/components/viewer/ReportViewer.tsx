@@ -603,21 +603,46 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
                         </td>
                       </tr>
                     ) : (
-                      paginatedRows.map((row, rowIdx) => (
-                        <tr key={rowIdx} className="hover:bg-slate-50/80 transition">
+                      paginatedRows.map((row, rowIdx) => {
+                        const rowRuleEval =
+                          tableEl?.conditionalRules && tableEl.conditionalRules.length > 0
+                            ? ConditionalFormattingEngine.evaluateElementRules(
+                                tableEl,
+                                row,
+                                filteredData
+                              )
+                            : null;
+
+                        if (rowRuleEval?.isHidden) return null;
+
+                        return (
+                        <tr
+                          key={rowIdx}
+                          className="transition"
+                          style={{
+                            backgroundColor: rowRuleEval?.style.backgroundColor,
+                            color: rowRuleEval?.style.color,
+                            fontWeight: rowRuleEval?.style.fontWeight,
+                            fontStyle: rowRuleEval?.style.fontStyle,
+                            textDecoration: rowRuleEval?.style.textDecoration,
+                          }}
+                        >
                           {columns.map((col) => {
                             const rawVal = row[col.field];
                             let formatted = FormulaEngine.formatValue(rawVal, col.format);
 
-                            // Apply dynamic conditional formatting rules
-                            let style = {};
+                            // Apply row-level and cell-level conditional formatting rules
+                            let style = rowRuleEval?.style || {};
                             if (col.conditionalRules && col.conditionalRules.length > 0) {
-                              style = ConditionalFormattingEngine.evaluateColumnRules(
-                                col,
-                                rawVal,
-                                row,
-                                filteredData
-                              ).style;
+                              style = {
+                                ...style,
+                                ...ConditionalFormattingEngine.evaluateColumnRules(
+                                  col,
+                                  rawVal,
+                                  row,
+                                  filteredData
+                                ).style,
+                              };
                             }
 
                             return (
@@ -640,7 +665,8 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
                             );
                           })}
                         </tr>
-                      ))
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
