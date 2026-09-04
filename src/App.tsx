@@ -13,11 +13,13 @@ import {
   ElementType, 
   BandType,
   ReportBand,
-  ReportDataSource
+  ReportDataSource,
+  TableColumn
 } from './types/report';
 import { SAMPLE_REPORTS } from './data/sampleReports';
 import { generateLiveStreamPulse } from './services/mysqlMockData';
 import { PdfExporter } from './services/pdfExporter';
+import { autoGenerateColumnsForDataSource } from './services/dataSourceCatalog';
 import { useUndoRedo } from './hooks/useUndoRedo';
 import { Navbar } from './components/Navbar';
 import { ElementPalette } from './components/designer/ElementPalette';
@@ -148,34 +150,126 @@ export default function App() {
       newElement.xAxisField = firstString;
       newElement.yAxisFields = [firstNumeric];
     } else if (type === 'table') {
-      const topCols = fields.slice(0, 4);
-      newElement.columns = topCols.length > 0 ? topCols.map((c, idx) => ({
-        id: `col-${idx + 1}`,
-        header: c.displayName,
-        field: c.name,
-        width: Math.floor(100 / topCols.length),
-        align: c.type === 'currency' || c.type === 'number' ? 'right' : 'left',
-        format: c.type === 'currency' ? 'currency' : c.type === 'number' ? 'number' : 'text',
-        summaryType: c.type === 'currency' || c.type === 'number' ? 'sum' : 'none',
-      })) : [
-        { id: '1', header: 'Invoice #', field: 'order_number', width: 20, align: 'left' },
-        { id: '2', header: 'Customer', field: 'customer_name', width: 35, align: 'left' },
-        { id: '3', header: 'Category', field: 'product_category', width: 25, align: 'left' },
-        { id: '4', header: 'Revenue', field: 'gross_revenue', width: 20, align: 'right', format: 'currency', summaryType: 'sum' },
-      ];
+      const activeDs = activeTemplate.dataSources[0];
+      newElement.dataSourceId = activeDs?.id;
+      newElement.name = `${activeDs?.name || 'Data'} Table`;
+      newElement.columns = autoGenerateColumnsForDataSource(activeDs, 5);
       newElement.showTableFooter = true;
+      newElement.stripedRows = true;
+      newElement.denseRows = false;
     } else if (type === 'qrcode') {
       newElement.qrValue = 'https://enterprise.internal/reports/' + activeTemplate.id;
       newElement.width = 64;
       newElement.height = 64;
     }
 
-    setTemplate((prev) => ({
-      ...prev,
-      elements: [...prev.elements, newElement],
-    }), `Added ${fieldBinding || type.toUpperCase()} to ${band}`);
+    setTemplate((prev) => {
+      let updatedBands = prev.bands;
+      if (type === 'table' && prev.bands[band] && prev.bands[band].height < 250) {
+        updatedBands = {
+          ...prev.bands,
+          [band]: {
+            ...prev.bands[band],
+            height: 260,
+          },
+        };
+      }
+      return {
+        ...prev,
+        bands: updatedBands,
+        elements: [...prev.elements, newElement],
+      };
+    }, `Added ${fieldBinding || type.toUpperCase()} to ${band}`);
 
     setSelectedElementId(newId);
+  };
+
+  // Add full table generated directly from all API / Data Source fields
+  const handleAddTableFromApi = () => {
+    const ds = activeTemplate.dataSources[0];
+    const dsFields = ds?.fields || [];
+    const band: BandType = activeBand || 'details';
+    const newId = `el-table-api-${Date.now()}`;
+
+    const cols: TableColumn[] = dsFields.length > 0
+      ? dsFields.map((f, idx) => ({
+          id: `col-${idx + 1}`,
+          header: f.displayName || (f as any).label || f.name.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
+          field: f.name,
+          width: Math.floor(100 / Math.min(dsFields.length, 6)),
+          align: f.type === 'currency' || f.type === 'number' ? 'right' : 'left',
+          format: f.type === 'currency' ? 'currency' : f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text',
+          summaryType: f.type === 'currency' || f.type === 'number' ? 'sum' : 'none',
+        }))
+      : [
+          { id: '1', header: 'ID', field: 'id', width: 20, align: 'left' },
+          { id: '2', header: 'Title', field: 'name', width: 40, align: 'left' },
+          { id: '3', header: 'Amount', field: 'amount', width: 40, align: 'right', format: 'currency', summaryType: 'sum' },
+        ];
+
+    const tableEl: ReportElement = {
+      id: newId,
+      type: 'table',
+      name: `Table (${ds?.name || 'API Data'})`,
+      dataSourceId: ds?.id,
+      band,
+      x: 16,
+      y: 12,
+      width: 720,
+      height: 240,
+      style: {
+        fontSize: 11,
+        textColor: '#0f172a',
+        backgroundColor: '#ffffff',
+        borderColor: '#cbd5e1',
+        borderWidth: 1,
+        borderRadius: 8,
+      },
+      columns: cols,
+      showTableFooter: true,
+      stripedRows: true,
+      denseRows: false,
+    };
+
+    setTemplate((prev) => {
+      let nextBands = prev.bands;
+      if (prev.bands[band] && prev.bands[band].height < 260) {
+        nextBands = {
+          ...prev.bands,
+          [band]: {
+            ...prev.bands[band],
+            height: 270,
+          },
+        };
+      }
+      return {
+        ...prev,
+        bands: nextBands,
+        elements: [...prev.elements, tableEl],
+      };
+    }, `Added API Table (${cols.length} cols) to ${band}`);
+
+    setSelectedElementId(newId);
+  };
+
+  // Add column to selected table element
+  const handleAddColumnToSelectedTable = (fieldName: string, fieldType: string) => {
+    if (!selectedElement || selectedElement.type !== 'table') return;
+    const existingCols = selectedElement.columns || [];
+    const newCol: TableColumn = {
+      id: `col-${Date.now()}`,
+      header: fieldName.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
+      field: fieldName,
+      width: Math.floor(100 / (existingCols.length + 1)),
+      align: fieldType === 'currency' || fieldType === 'number' ? 'right' : 'left',
+      format: fieldType === 'currency' ? 'currency' : fieldType === 'number' ? 'number' : fieldType === 'date' ? 'date' : 'text',
+      summaryType: fieldType === 'currency' || fieldType === 'number' ? 'sum' : 'none',
+    };
+    const updated: ReportElement = {
+      ...selectedElement,
+      columns: [...existingCols, newCol],
+    };
+    handleUpdateElement(updated, `Added ${fieldName} column to Table`);
   };
 
   // Update single element
@@ -431,6 +525,9 @@ export default function App() {
               onAddElement={handleAddElement}
               activeBand={activeBand}
               dataSource={activeTemplate.dataSources[0]}
+              selectedElement={selectedElement}
+              onAddTableFromApi={handleAddTableFromApi}
+              onAddColumnToSelectedTable={handleAddColumnToSelectedTable}
               onNavigateToDataSources={() => setCurrentView('datasources')}
             />
 
@@ -473,6 +570,15 @@ export default function App() {
                   initialFormula: initialExpr,
                   callback,
                 });
+              }}
+              onAddDataSource={(newDs) => {
+                setTemplate((prev) => {
+                  if (prev.dataSources.some((d) => d.id === newDs.id)) return prev;
+                  return {
+                    ...prev,
+                    dataSources: [...prev.dataSources, newDs],
+                  };
+                }, `Added Data Source: ${newDs.name}`);
               }}
             />
           </div>

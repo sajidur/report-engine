@@ -7,7 +7,8 @@ import {
   ReportBand,
   ReportDataSource,
   ActiveAppView, 
-  ReportPageSettings 
+  ReportPageSettings,
+  TableColumn
 } from '../../types/report';
 import { HistoryEntry } from '../../hooks/useUndoRedo';
 import { 
@@ -60,7 +61,8 @@ import {
   RefreshCw,
   Columns,
   Layout,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Table as TableIcon
 } from 'lucide-react';
 import { FormulaEngine } from '../../services/formulaEngine';
 import { ConditionalFormattingEngine } from '../../services/conditionalFormattingEngine';
@@ -76,6 +78,8 @@ import { PrecisionAlignmentBar } from './PrecisionAlignmentBar';
 import { PreviewOptionsBar } from './PreviewOptionsBar';
 import { LiveReportRenderer } from './LiveReportRenderer';
 import { ApiEndpointModal } from './ApiEndpointModal';
+import { ExternalAppIntegrationModal } from '../integration/ExternalAppIntegrationModal';
+import { resolveElementDataSource, autoGenerateColumnsForDataSource, createColumnForField } from '../../services/dataSourceCatalog';
 
 interface ReportDesignerProps {
   template: ReportTemplate;
@@ -104,6 +108,8 @@ interface ReportDesignerProps {
   onUpdatePageSettings?: (settings: Partial<ReportPageSettings>) => void;
   onOpenExportModal?: () => void;
   onApplyDataSource?: (newDs: ReportDataSource) => void;
+  parameters?: Record<string, any>;
+  onOpenIntegrationModal?: () => void;
 }
 
 const BAND_ORDER: BandType[] = [
@@ -151,6 +157,8 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
   onUpdatePageSettings,
   onOpenExportModal,
   onApplyDataSource,
+  parameters = { Region: 'All' },
+  onOpenIntegrationModal,
 }) => {
   const [zoom, setZoom] = useState<number>(100);
   const [gridSettings, setGridSettings] = useState<GridSettings>(DEFAULT_GRID_SETTINGS);
@@ -158,6 +166,7 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
   const [isHistoryDropdownOpen, setIsHistoryDropdownOpen] = useState<boolean>(false);
   const [isAutoArrangeMenuOpen, setIsAutoArrangeMenuOpen] = useState<boolean>(false);
   const [isApiModalOpen, setIsApiModalOpen] = useState<boolean>(false);
+  const [isIntegrationModalOpen, setIsIntegrationModalOpen] = useState<boolean>(false);
   
   // Live Active Guides & Drag HUD state
   const [activeGuides, setActiveGuides] = useState<SnapGuide[]>([]);
@@ -253,6 +262,37 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
       onUpdateBands,
     ]
   );
+
+  // Helper to calculate cumulative vertical offset of a band within the canvas
+  const getBandTopOffset = useCallback(
+    (targetBand: BandType): number => {
+      let offset = 0;
+      for (const bType of BAND_ORDER) {
+        if (bType === targetBand) break;
+        const b = template.bands[bType];
+        if (b && b.visible) {
+          offset += collapsedBands[bType] ? 28 : (b.height || 60);
+        }
+      }
+      return offset;
+    },
+    [template.bands, collapsedBands]
+  );
+
+  // Snaps all elements in a specific band to the grid
+  const handleSnapBandToGrid = (bandToSnap: BandType = activeBand) => {
+    const res = AlignmentEngine.snapAllBandElementsToGrid(
+      template.elements,
+      bandToSnap,
+      gridSettings.size
+    );
+    if (res.snappedCount === 0) return;
+    if (onUpdateMultipleElements) {
+      onUpdateMultipleElements(res.updatedElements, res.description);
+    } else {
+      res.updatedElements.forEach((el) => onUpdateElement(el, res.description));
+    }
+  };
 
   // Dragging / Moving state
   const draggingRef = useRef<{
@@ -478,8 +518,8 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
       let newHeight = Math.max(16, Math.round(resizingRef.current.initialHeight + dh));
 
       if (gridSettings.enabled) {
-        newWidth = AlignmentEngine.snapToGridValue(newWidth, gridSettings.size);
-        newHeight = AlignmentEngine.snapToGridValue(newHeight, gridSettings.size);
+        newWidth = Math.max(gridSettings.size, AlignmentEngine.snapToGridValue(newWidth, gridSettings.size));
+        newHeight = Math.max(gridSettings.size, AlignmentEngine.snapToGridValue(newHeight, gridSettings.size));
       }
 
       const bandH = template.bands[el.band]?.height || 100;
@@ -490,12 +530,37 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
         resizingRef.current.hasResized = true;
       }
 
+      const resizeGuides: SnapGuide[] = [];
+      if (gridSettings.enabled) {
+        resizeGuides.push({
+          id: `guide-resize-x-${el.x + newWidth}`,
+          type: 'vertical',
+          position: el.x + newWidth,
+          start: 0,
+          end: bandH,
+          label: `W: ${newWidth}px`,
+          color: '#0ea5e9',
+        });
+        resizeGuides.push({
+          id: `guide-resize-y-${el.y + newHeight}`,
+          type: 'horizontal',
+          position: el.y + newHeight,
+          start: 0,
+          end: canvasWidth,
+          label: `H: ${newHeight}px`,
+          color: '#0ea5e9',
+        });
+      }
+      setActiveGuides(resizeGuides);
+
       setActiveDragHud({
         x: el.x,
         y: el.y,
         width: newWidth,
         height: newHeight,
-        snapMessage: `${newWidth} × ${newHeight} px`,
+        snapMessage: gridSettings.enabled
+          ? `Grid Snap (${gridSettings.size}px): ${newWidth} × ${newHeight} px`
+          : `${newWidth} × ${newHeight} px`,
         isSnapped: gridSettings.enabled,
       });
 
@@ -509,6 +574,7 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
     const handleMouseUp = () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      setActiveGuides([]);
       setActiveDragHud(null);
       resizingRef.current = null;
     };
@@ -719,6 +785,44 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
           </span>
         </div>
 
+        {/* Snap to Grid Quick Controls */}
+        <div className="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-lg p-0.5 shadow-xs">
+          <button
+            id="designer-toggle-snap-btn"
+            onClick={() => setGridSettings((prev) => ({ ...prev, enabled: !prev.enabled }))}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition ${
+              gridSettings.enabled
+                ? 'bg-cyan-950 text-cyan-300 border border-cyan-700 shadow-xs'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+            }`}
+            title={`Toggle Snap to Grid (${gridSettings.enabled ? 'Active' : 'Off'})`}
+          >
+            <Magnet className={`w-3.5 h-3.5 ${gridSettings.enabled ? 'text-cyan-400' : 'text-slate-500'}`} />
+            <span>Snap</span>
+            <span className="font-mono text-[10px] px-1 rounded bg-slate-900 border border-slate-800 text-cyan-400">
+              {gridSettings.size}px
+            </span>
+          </button>
+
+          {/* Quick Grid Size Pill Buttons */}
+          <div className="hidden lg:flex items-center gap-0.5 px-1 border-l border-slate-800">
+            {[4, 8, 12, 16, 24].map((sz) => (
+              <button
+                key={sz}
+                onClick={() => setGridSettings((prev) => ({ ...prev, size: sz, enabled: true }))}
+                className={`px-1.5 py-0.5 text-[10px] font-mono rounded transition ${
+                  gridSettings.enabled && gridSettings.size === sz
+                    ? 'bg-cyan-600 text-white font-bold'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+                title={`Set Snap Grid size to ${sz}px`}
+              >
+                {sz}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Center: Auto-Arrange Band Elements with Constraint Algorithm Menu */}
         <div className="relative">
           <div className="flex items-center rounded-lg bg-slate-950 border border-slate-800 p-0.5 shadow-xs">
@@ -811,6 +915,23 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
                   <div className="text-[10px] text-slate-400">Even vertical spacing down the band</div>
                 </div>
               </button>
+
+              {/* Snap All Elements in Band to Grid */}
+              <div className="border-t border-slate-800 my-1" />
+              <button
+                id="btn-auto-arrange-snap-all"
+                onClick={() => {
+                  handleSnapBandToGrid(activeBand);
+                  setIsAutoArrangeMenuOpen(false);
+                }}
+                className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-800 flex items-center gap-2 text-cyan-300 transition"
+              >
+                <Grid className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                <div>
+                  <div className="font-semibold text-slate-100">Snap All in Band to Grid</div>
+                  <div className="text-[10px] text-slate-400">Lock all positions & sizes to {gridSettings.size}px grid</div>
+                </div>
+              </button>
             </div>
           )}
         </div>
@@ -830,6 +951,13 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
           onNavigateToPreview={onNavigateView ? () => onNavigateView('preview') : undefined}
           onOpenExportModal={onOpenExportModal}
           onOpenApiModal={() => setIsApiModalOpen(true)}
+          onOpenIntegrationModal={() => {
+            if (onOpenIntegrationModal) {
+              onOpenIntegrationModal();
+            } else {
+              setIsIntegrationModalOpen(true);
+            }
+          }}
         />
       </div>
 
@@ -933,11 +1061,13 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
                   </div>
                 );
               }
+              const currentBandOffset = getBandTopOffset(activeBand);
+              const topPos = currentBandOffset + g.position;
               return (
                 <div
                   key={g.id}
                   style={{
-                    top: `${g.position}px`,
+                    top: `${topPos}px`,
                     left: 0,
                     right: 0,
                     backgroundColor: g.color || '#06b6d4',
@@ -961,7 +1091,7 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
               <div
                 style={{
                   left: `${activeDragHud.x + activeDragHud.width / 2}px`,
-                  top: `${Math.max(10, activeDragHud.y - 32)}px`,
+                  top: `${Math.max(10, getBandTopOffset(activeBand) + activeDragHud.y - 34)}px`,
                   transform: 'translateX(-50%)',
                 }}
                 className="absolute z-50 bg-slate-900/95 text-slate-100 border border-cyan-500 px-2.5 py-1 rounded-lg shadow-xl pointer-events-none flex items-center gap-2 font-mono text-[11px]"
@@ -1175,22 +1305,201 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
                             </div>
                           )}
 
-                          {el.type === 'table' && (
-                            <div className="w-full h-full bg-white border border-slate-200 rounded-lg overflow-hidden flex flex-col text-[10px] shadow-xs">
-                              <div className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 px-2 py-1 flex items-center justify-between">
-                                <span>Banded Table Grid ({el.columns?.length || 4} Cols)</span>
-                                <span className="text-[9px] font-mono text-slate-400">{dataset.length} Rows</span>
-                              </div>
-                              <div className="p-1 flex-1 overflow-hidden font-mono divide-y divide-slate-100">
-                                {dataset.slice(0, 3).map((r, ri) => (
-                                  <div key={ri} className="flex items-center justify-between py-1 px-1">
-                                    <span className="text-slate-800 truncate">{r.customer_name || r.item_name || 'Customer Item'}</span>
-                                    <span className="text-cyan-700 font-bold">{FormulaEngine.formatValue(r.gross_revenue || r.amount || 1200, 'currency')}</span>
+                          {el.type === 'table' && (() => {
+                            const tableDs = resolveElementDataSource(template, el.dataSourceId);
+                            const tableData = tableDs?.data || dataset;
+                            const cols: TableColumn[] = el.columns && el.columns.length > 0
+                              ? el.columns
+                              : autoGenerateColumnsForDataSource(tableDs, 4);
+                            const isLive = gridSettings.dataPreviewMode === 'live';
+                            const previewRows = tableData.slice(0, 4);
+
+                            const handleQuickAddCol = (e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              const dsFields = tableDs?.fields || [];
+                              const unusedField = dsFields.find((f) => !cols.some((c) => c.field === f.name)) || dsFields[0];
+                              if (!unusedField) return;
+                              const newCol = createColumnForField(unusedField, Math.floor(100 / (cols.length + 1)));
+                              onUpdateElement({
+                                ...el,
+                                columns: [...cols, newCol],
+                              }, `Added ${unusedField.displayName || unusedField.name} column to Table`);
+                            };
+
+                            const handleAutoApiCols = (e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              const newCols = autoGenerateColumnsForDataSource(tableDs);
+                              onUpdateElement({
+                                ...el,
+                                columns: newCols,
+                                showTableFooter: true,
+                              }, `Auto-mapped columns from ${tableDs.name}`);
+                            };
+
+                            const handleToggleTotals = (e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              onUpdateElement({
+                                ...el,
+                                showTableFooter: !el.showTableFooter,
+                              }, 'Toggled Table Summary Totals');
+                            };
+
+                            return (
+                              <div className="w-full h-full bg-white border border-slate-300 rounded-lg overflow-hidden flex flex-col text-[11px] shadow-xs select-none">
+                                {/* Table Component Ribbon Header */}
+                                <div className="bg-slate-100/90 text-slate-800 font-bold border-b border-slate-200 px-2.5 py-1.5 flex items-center justify-between shrink-0">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <TableIcon className="w-3.5 h-3.5 text-cyan-600 shrink-0" />
+                                    <span className="truncate font-semibold">{el.name || 'Table Control'}</span>
+                                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 border border-slate-300 shrink-0 truncate max-w-[130px]" title={tableDs.name}>
+                                      {tableDs.name}
+                                    </span>
+                                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 shrink-0">
+                                      {cols.length} Cols
+                                    </span>
                                   </div>
-                                ))}
+
+                                  {isSelected ? (
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        onClick={handleQuickAddCol}
+                                        title="Add a column to this table"
+                                        className="px-1.5 py-0.5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-[10px] font-mono text-cyan-700 hover:text-cyan-800 font-semibold transition"
+                                      >
+                                        + Col
+                                      </button>
+                                      <button
+                                        onClick={handleAutoApiCols}
+                                        title={`Populate columns with all fields from ${tableDs.name}`}
+                                        className="px-1.5 py-0.5 rounded bg-cyan-50 hover:bg-cyan-100 border border-cyan-300 text-[10px] font-mono text-cyan-800 font-semibold transition flex items-center gap-1"
+                                      >
+                                        <Sparkles className="w-2.5 h-2.5" />
+                                        <span>Map All</span>
+                                      </button>
+                                      <button
+                                        onClick={handleToggleTotals}
+                                        title="Toggle footer summary total row"
+                                        className={`px-1.5 py-0.5 rounded border text-[10px] font-mono transition ${
+                                          el.showTableFooter !== false
+                                            ? 'bg-amber-50 border-amber-300 text-amber-800 font-bold'
+                                            : 'bg-white border-slate-300 text-slate-500'
+                                        }`}
+                                      >
+                                        Σ Totals
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[9px] font-mono text-slate-500">
+                                      {tableData.length} Rows • {tableDs.type}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Table Header Row (Column Labels & Widths) */}
+                                <div className="bg-slate-50/90 border-b border-slate-200 flex items-center font-bold text-slate-700 text-[10px] uppercase tracking-wider shrink-0 divide-x divide-slate-200">
+                                  {cols.map((col) => (
+                                    <div
+                                      key={col.id}
+                                      style={{
+                                        width: `${col.width || Math.floor(100 / cols.length)}%`,
+                                        textAlign: col.align || 'left',
+                                      }}
+                                      className="p-1.5 truncate"
+                                      title={`${col.header} (${col.field})`}
+                                    >
+                                      {col.header}
+                                    </div>
+                                  ))}
+                                </div>
+
+                                {/* Table Body Rows */}
+                                <div className="flex-1 overflow-y-auto divide-y divide-slate-100 font-mono text-[10px]">
+                                  {isLive ? (
+                                    previewRows.length === 0 ? (
+                                      <div className="p-3 text-center text-slate-400 italic">No rows returned from {tableDs.name}</div>
+                                    ) : (
+                                      previewRows.map((row, rIdx) => (
+                                        <div 
+                                          key={rIdx} 
+                                          className={`flex items-center divide-x divide-slate-100 hover:bg-cyan-50/30 ${
+                                            el.stripedRows !== false && rIdx % 2 === 1 ? 'bg-slate-50/70' : 'bg-white'
+                                          }`}
+                                        >
+                                          {cols.map((col) => (
+                                            <div
+                                              key={col.id}
+                                              style={{
+                                                width: `${col.width || Math.floor(100 / cols.length)}%`,
+                                                textAlign: col.align || 'left',
+                                              }}
+                                              className={`${el.denseRows ? 'py-1 px-1.5' : 'p-1.5'} truncate text-slate-800`}
+                                            >
+                                              {FormulaEngine.formatValue(row[col.field], col.format || 'none')}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ))
+                                    )
+                                  ) : (
+                                    // Banded Design Mode: shows database field tokens {Table.Field}
+                                    [0, 1].map((rIdx) => (
+                                      <div
+                                        key={rIdx}
+                                        className={`flex items-center divide-x divide-slate-100 ${
+                                          rIdx === 0 ? 'bg-white' : 'bg-slate-50/40'
+                                        }`}
+                                      >
+                                        {cols.map((col) => (
+                                          <div
+                                            key={col.id}
+                                            style={{
+                                              width: `${col.width || Math.floor(100 / cols.length)}%`,
+                                              textAlign: col.align || 'left',
+                                            }}
+                                            className={`${el.denseRows ? 'py-1 px-1.5' : 'p-1.5'} truncate text-slate-600`}
+                                          >
+                                            <span className="px-1 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold border border-slate-200/80 text-[9px]">
+                                              {`{${col.field}}`}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+
+                                {/* Table Summary / Footer Row */}
+                                {el.showTableFooter !== false && (
+                                  <div className="bg-slate-100/90 border-t-2 border-slate-300 flex items-center font-bold text-slate-800 text-[10px] shrink-0 divide-x divide-slate-300">
+                                    {cols.map((col, cIdx) => {
+                                      const isSummable = col.summaryType === 'sum' || col.format === 'currency' || col.format === 'number';
+                                      let summaryVal = '';
+                                      if (isSummable && isLive && tableData.length > 0) {
+                                        const sum = tableData.reduce((acc, curr) => acc + (Number(curr[col.field]) || 0), 0);
+                                        summaryVal = FormulaEngine.formatValue(sum, col.format || 'none');
+                                      } else if (isSummable) {
+                                        summaryVal = `SUM({${col.field}})`;
+                                      } else if (cIdx === 0) {
+                                        summaryVal = 'Summary Total:';
+                                      }
+                                      return (
+                                        <div
+                                          key={col.id}
+                                          style={{
+                                            width: `${col.width || Math.floor(100 / cols.length)}%`,
+                                            textAlign: col.align || 'left',
+                                          }}
+                                          className="p-1.5 truncate font-mono text-cyan-800"
+                                        >
+                                          {summaryVal}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                               </div>
-                            </div>
-                          )}
+                            );
+                          })()}
 
                           {el.type === 'qrcode' && (
                             <div className="w-full h-full flex flex-col items-center justify-center p-1 bg-white border border-slate-200 rounded">
@@ -1301,9 +1610,14 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
         canvasWidth={canvasWidth}
         gridSettings={gridSettings}
         bandHeight={selectedBandObj?.height || 100}
+        templateBands={template.bands}
+        dataSource={template.dataSources[0]}
         onUpdateElement={onUpdateElement}
         onUpdateMultipleElements={onUpdateMultipleElements}
+        onDeleteElement={onDeleteElement}
+        onDuplicateElement={onDuplicateElement}
         onAutoArrange={handleAutoArrange}
+        onOpenApiModal={() => setIsApiModalOpen(true)}
       />
 
       {/* 4. REST & OPTIONS API ENDPOINT MODAL (Direct Option in Visual Designer) */}
@@ -1318,6 +1632,15 @@ export const ReportDesigner: React.FC<ReportDesignerProps> = ({
             onUpdateBands(template.bands, `Bound to API: ${newDs.name}`);
           }
         }}
+      />
+
+      {/* 5. EXTERNAL APPLICATION INTEGRATION & API CONFIG MODAL */}
+      <ExternalAppIntegrationModal
+        isOpen={isIntegrationModalOpen}
+        onClose={() => setIsIntegrationModalOpen(false)}
+        template={template}
+        dataset={dataset}
+        parameters={parameters}
       />
     </div>
   );

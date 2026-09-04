@@ -92,9 +92,13 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
   const [viewerZoom, setViewerZoom] = useState<number>(100);
   const [showKpiCards, setShowKpiCards] = useState<boolean>(true);
 
+  const tableEl = template.elements.find((el) => el.type === 'table');
+  const tableDs = template.dataSources.find((ds) => ds.id === tableEl?.dataSourceId) || template.dataSources[0];
+  const baseTableData = tableDs?.data || dataset;
+
   // Filter dataset by search term and parameters
   const filteredData = useMemo(() => {
-    let list = [...dataset];
+    let list = [...baseTableData];
 
     // Territory / Region Filter
     const activeRegion = parameters.Region;
@@ -111,7 +115,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
     }
 
     return list;
-  }, [dataset, parameters, searchTerm]);
+  }, [baseTableData, parameters, searchTerm]);
 
   // Aggregated totals for charts & summaries
   const totalRevenue = useMemo(() => {
@@ -148,7 +152,6 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
     return filteredData.slice(start, start + itemsPerPage);
   }, [filteredData, currentPage, itemsPerPage]);
 
-  const tableEl = template.elements.find((el) => el.type === 'table');
   const columns: TableColumn[] = tableEl?.columns || [
     { id: '1', header: 'Invoice #', field: 'order_number', width: 20, align: 'left' },
     { id: '2', header: 'Customer Name', field: 'customer_name', width: 30, align: 'left' },

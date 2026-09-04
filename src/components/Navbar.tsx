@@ -37,6 +37,7 @@ interface NavbarProps {
   onUndo?: () => void;
   onRedo?: () => void;
   onOpenSaveTemplateModal?: () => void;
+  onOpenIntegrationModal?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -56,6 +57,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onUndo,
   onRedo,
   onOpenSaveTemplateModal,
+  onOpenIntegrationModal,
 }) => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -263,6 +265,19 @@ export const Navbar: React.FC<NavbarProps> = ({
               </>
             )}
           </button>
+
+          {/* Use in External Application Button */}
+          {onOpenIntegrationModal && (
+            <button
+              id="navbar-use-in-app-btn"
+              onClick={onOpenIntegrationModal}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-700/80 text-cyan-300 hover:text-white transition shadow-xs"
+              title="Use in external applications: configure dynamic Base URLs, view API format, and copy code"
+            >
+              <Code2 className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden sm:inline">Use in App</span>
+            </button>
+          )}
 
           {/* Share .rpt.json */}
           <button

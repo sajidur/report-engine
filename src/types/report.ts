@@ -58,7 +58,8 @@ export type RuleOperator =
 export interface DataSourceField {
   name: string;
   type: 'string' | 'number' | 'boolean' | 'date' | 'currency';
-  displayName: string;
+  displayName?: string;
+  label?: string;
 }
 
 export interface ConditionalFormattingRule {
@@ -118,11 +119,16 @@ export interface ReportElement {
   prefix?: string;
   suffix?: string;
 
+  // Data source binding
+  dataSourceId?: string; // ID of the bound DataSource (e.g. 'ds-sales-mysql', 'ds-financial-ledger')
+
   // Table specific
   columns?: TableColumn[];
   showTableFooter?: boolean;
   stripedRows?: boolean;
   denseRows?: boolean;
+  headerBackgroundColor?: string;
+  headerTextColor?: string;
 
   // Chart specific
   chartType?: ChartType;
@@ -203,14 +209,17 @@ export interface ReportDataSource {
   type: 'mysql' | 'rest' | 'stream' | 'static';
   query?: string; // SQL SELECT query
   endpoint?: string;
-  endpointUrl?: string; // legacy alias used by API modal
-  httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
+  endpointUrl?: string;
+  httpMethod?: string;
   jsonPath?: string;
+  headers?: Record<string, string>;
+  authHeader?: string;
   parametersMap?: Record<string, string>;
   fields: {
     name: string;
     type: 'string' | 'number' | 'boolean' | 'date' | 'currency';
-    displayName: string;
+    displayName?: string;
+    label?: string;
   }[];
   data: Record<string, any>[];
   liveStreamInterval?: number; // ms for simulation

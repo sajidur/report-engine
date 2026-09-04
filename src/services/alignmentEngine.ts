@@ -15,11 +15,11 @@ export interface DragHudInfo {
   y: number;
   width: number;
   height: number;
-  bandName: string;
+  bandName?: string;
   snapMessage: string;
   isSnapped: boolean;
-  deltaX: number;
-  deltaY: number;
+  deltaX?: number;
+  deltaY?: number;
 }
 
 export type GridStyleType = 'dots' | 'lines' | 'crosshairs' | 'off';
@@ -75,6 +75,48 @@ export class AlignmentEngine {
   }
 
   /**
+   * Calculates snapping guides and final snapped coordinates during element dragging
+   */
+  static calculateSnapping(
+    targetEl: ReportElement,
+    otherElementsInBand: ReportElement[],
+    gridSettings: GridSettings,
+    canvasWidth: number,
+    bandHeight: number
+  ): {
+    x: number;
+    y: number;
+    guides: SnapGuide[];
+    hud: DragHudInfo;
+  } {
+    const dummyBand: ReportBand = {
+      type: targetEl.band,
+      name: targetEl.band,
+      height: bandHeight,
+      visible: true,
+    };
+    const res = this.computeDragAlignment(
+      targetEl,
+      targetEl.x,
+      targetEl.y,
+      targetEl.width,
+      targetEl.height,
+      otherElementsInBand,
+      dummyBand,
+      canvasWidth,
+      gridSettings,
+      targetEl.x,
+      targetEl.y
+    );
+    return {
+      x: res.finalX,
+      y: res.finalY,
+      guides: res.guides,
+      hud: res.hud,
+    };
+  }
+
+  /**
    * Evaluates magnetic alignment guides and grid snapping during element drag/resize
    */
   static computeDragAlignment(
@@ -111,7 +153,7 @@ export class AlignmentEngine {
       finalX = gX;
       finalY = gY;
       isSnapped = true;
-      snapMessage = `Grid Snap (${gridSettings.size}px)`;
+      snapMessage = `Grid Snap (${gridSettings.size}px) [X:${gX}, Y:${gY}]`;
     }
 
     if (isMagnetic) {
@@ -315,6 +357,32 @@ export class AlignmentEngine {
       }
     }
 
+    // If grid snapping is active and no magnetic guides were created on an axis, provide grid snap guide
+    if (gridSettings.enabled) {
+      if (!guides.some((g) => g.type === 'vertical')) {
+        guides.push({
+          id: `guide-grid-x-${Math.round(finalX)}`,
+          type: 'vertical',
+          position: Math.round(finalX),
+          start: 0,
+          end: band.height,
+          label: `Grid X: ${Math.round(finalX)}px`,
+          color: '#0ea5e9',
+        });
+      }
+      if (!guides.some((g) => g.type === 'horizontal')) {
+        guides.push({
+          id: `guide-grid-y-${Math.round(finalY)}`,
+          type: 'horizontal',
+          position: Math.round(finalY),
+          start: 0,
+          end: canvasWidth,
+          label: `Grid Y: ${Math.round(finalY)}px`,
+          color: '#0ea5e9',
+        });
+      }
+    }
+
     const hud: DragHudInfo = {
       x: Math.round(finalX),
       y: Math.round(finalY),
@@ -395,6 +463,44 @@ export class AlignmentEngine {
       y: newY,
       width: newW,
       height: newH,
+    };
+  }
+
+  /**
+   * Snaps all elements in a specific band to the grid
+   */
+  static snapAllBandElementsToGrid(
+    allElements: ReportElement[],
+    targetBand: BandType,
+    gridSize: number
+  ): {
+    updatedElements: ReportElement[];
+    snappedCount: number;
+    description: string;
+  } {
+    const size = gridSize > 0 ? gridSize : 8;
+    let count = 0;
+    const updatedElements = allElements.map((el) => {
+      if (el.band !== targetBand) return el;
+      const nx = this.snapToGridValue(el.x, size);
+      const ny = this.snapToGridValue(el.y, size);
+      const nw = Math.max(size, this.snapToGridValue(el.width, size));
+      const nh = Math.max(size, this.snapToGridValue(el.height, size));
+      if (nx !== el.x || ny !== el.y || nw !== el.width || nh !== el.height) {
+        count++;
+      }
+      return {
+        ...el,
+        x: nx,
+        y: ny,
+        width: nw,
+        height: nh,
+      };
+    });
+    return {
+      updatedElements,
+      snappedCount: count,
+      description: `Snapped ${count} element${count === 1 ? '' : 's'} in ${targetBand} to ${size}px grid`,
     };
   }
 

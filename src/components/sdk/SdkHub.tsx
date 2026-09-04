@@ -13,7 +13,12 @@ import {
   FileJson, 
   ExternalLink,
   ShieldCheck,
-  Play
+  Play,
+  Globe,
+  Braces,
+  Key,
+  CheckCircle2,
+  Sparkles
 } from 'lucide-react';
 import { ReportTemplate } from '../../types/report';
 import { SdkCodeGenerator } from '../../services/sdkCodeGenerators';
@@ -26,7 +31,7 @@ interface SdkHubProps {
   onUpdateTemplateJson: (updated: ReportTemplate) => void;
 }
 
-type SdkTab = 'interactive' | 'react' | 'node' | 'dotnet' | 'mysql' | 'schema';
+type SdkTab = 'interactive' | 'external-app' | 'react' | 'node' | 'dotnet' | 'mysql' | 'schema';
 
 export const SdkHub: React.FC<SdkHubProps> = ({
   template,
@@ -39,6 +44,13 @@ export const SdkHub: React.FC<SdkHubProps> = ({
   const [embedTheme, setEmbedTheme] = useState<'dark' | 'light'>('light');
   const [jsonText, setJsonText] = useState(JSON.stringify(template, null, 2));
   const [jsonError, setJsonError] = useState<string | null>(null);
+
+  // Dynamic External App configuration
+  const [dynamicBaseUrl, setDynamicBaseUrl] = useState('https://api.mycompany.com');
+  const [externalMode, setExternalMode] = useState<'endpoint' | 'injected' | 'headless' | 'iframe'>('endpoint');
+  const [externalLang, setExternalLang] = useState<'react' | 'node' | 'python' | 'curl'>('react');
+  const [authType, setAuthType] = useState<'bearer' | 'apiKey' | 'none'>('bearer');
+  const [bearerToken, setBearerToken] = useState('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...');
 
   // Sync json text when template changes
   React.useEffect(() => {

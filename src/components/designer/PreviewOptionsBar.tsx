@@ -34,7 +34,8 @@ import {
   Globe,
   Radio,
   SplitSquareVertical,
-  Maximize2
+  Maximize2,
+  Code2
 } from 'lucide-react';
 
 interface PreviewOptionsBarProps {
@@ -52,6 +53,7 @@ interface PreviewOptionsBarProps {
   onNavigateToPreview?: () => void;
   onOpenExportModal?: () => void;
   onOpenApiModal?: () => void;
+  onOpenIntegrationModal?: () => void;
 }
 
 export const PreviewOptionsBar: React.FC<PreviewOptionsBarProps> = ({
@@ -69,6 +71,7 @@ export const PreviewOptionsBar: React.FC<PreviewOptionsBarProps> = ({
   onNavigateToPreview,
   onOpenExportModal,
   onOpenApiModal,
+  onOpenIntegrationModal,
 }) => {
   const [isDesignMenuOpen, setIsDesignMenuOpen] = useState(false);
   const [isPreviewMenuOpen, setIsPreviewMenuOpen] = useState(false);
@@ -215,6 +218,19 @@ export const PreviewOptionsBar: React.FC<PreviewOptionsBarProps> = ({
           {activeDs?.data?.length || 0}r
         </span>
       </button>
+
+      {/* USE IN APP & BASE URL CONFIG */}
+      {onOpenIntegrationModal && (
+        <button
+          id="btn-designer-use-in-app"
+          onClick={onOpenIntegrationModal}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-950/80 border border-cyan-700/80 hover:border-cyan-400 text-cyan-300 hover:text-white transition font-medium shadow-xs"
+          title="Use this report in external applications: configure dynamic Base URLs, view API format, and copy code"
+        >
+          <Code2 className="w-3.5 h-3.5 text-cyan-400" />
+          <span className="hidden sm:inline font-semibold">Use in App</span>
+        </button>
+      )}
 
       {/* 3. PREVIEW OPTIONS DROPDOWN & QUICK PANEL */}
       <div className="relative" ref={previewMenuRef}>

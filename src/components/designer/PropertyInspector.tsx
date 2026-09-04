@@ -13,8 +13,10 @@ import {
   Plus,
   Sliders
 } from 'lucide-react';
-import { ReportElement, ReportTemplate, TableColumn, ChartType, ConditionalFormattingRule } from '../../types/report';
+import { ReportElement, ReportTemplate, TableColumn, ChartType, ConditionalFormattingRule, ReportDataSource } from '../../types/report';
 import { ConditionalRulesInspector } from '../inspector/ConditionalRulesInspector';
+import { TablePropertiesInspector } from '../inspector/TablePropertiesInspector';
+import { resolveElementDataSource } from '../../services/dataSourceCatalog';
 
 interface PropertyInspectorProps {
   selectedElement: ReportElement | null;
@@ -24,6 +26,8 @@ interface PropertyInspectorProps {
   onDuplicateElement: (el: ReportElement) => void;
   onUpdatePageSettings: (settings: ReportTemplate['pageSettings']) => void;
   onOpenFormulaEditor: (initialExpr: string, callback: (expr: string) => void) => void;
+  onAddDataSource?: (ds: ReportDataSource) => void;
+  onOpenApiModal?: () => void;
 }
 
 export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
@@ -34,8 +38,13 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
   onDuplicateElement,
   onUpdatePageSettings,
   onOpenFormulaEditor,
+  onAddDataSource,
+  onOpenApiModal,
 }) => {
-  const fields = template.dataSources[0]?.fields || [];
+  const activeElementDs = selectedElement
+    ? resolveElementDataSource(template, selectedElement.dataSourceId)
+    : template.dataSources[0];
+  const fields = activeElementDs?.fields || template.dataSources[0]?.fields || [];
 
   // When no element is selected: Page & Document Settings
   if (!selectedElement) {
@@ -369,106 +378,15 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
         </div>
       )}
 
-      {/* Table Columns Editor */}
-      {el.type === 'table' && el.columns && (
-        <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-300">Table Columns ({el.columns.length})</span>
-            <button
-              onClick={() => {
-                const newCol: TableColumn = {
-                  id: `col-${Date.now()}`,
-                  header: 'New Column',
-                  field: fields[0]?.name || 'id',
-                  width: 15,
-                  align: 'left',
-                };
-                update({ columns: [...el.columns!, newCol] });
-              }}
-              className="text-[10px] bg-cyan-600 hover:bg-cyan-500 text-white px-2 py-0.5 rounded font-semibold flex items-center gap-1"
-            >
-              <Plus className="w-3 h-3" />
-              <span>Add</span>
-            </button>
-          </div>
-
-          <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-            {el.columns.map((col, idx) => (
-              <div key={col.id} className="p-2 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5 text-xs">
-                <div className="flex items-center justify-between">
-                  <input
-                    type="text"
-                    value={col.header}
-                    onChange={(e) => {
-                      const copy = [...el.columns!];
-                      copy[idx].header = e.target.value;
-                      update({ columns: copy });
-                    }}
-                    className="bg-transparent text-xs font-semibold text-slate-200 border-b border-slate-700 w-24"
-                  />
-                  <button
-                    onClick={() => {
-                      const copy = el.columns!.filter((_, i) => i !== idx);
-                      update({ columns: copy });
-                    }}
-                    className="text-slate-500 hover:text-rose-400"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-                  <select
-                    value={col.field}
-                    onChange={(e) => {
-                      const copy = [...el.columns!];
-                      copy[idx].field = e.target.value;
-                      update({ columns: copy });
-                    }}
-                    className="bg-slate-950 border border-slate-800 rounded p-1 text-slate-300 font-mono"
-                  >
-                    {fields.map((f) => (
-                      <option key={f.name} value={f.name}>
-                        {f.displayName}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={col.format || 'text'}
-                    onChange={(e) => {
-                      const copy = [...el.columns!];
-                      copy[idx].format = e.target.value as any;
-                      update({ columns: copy });
-                    }}
-                    className="bg-slate-950 border border-slate-800 rounded p-1 text-slate-300"
-                  >
-                    <option value="text">Text</option>
-                    <option value="currency">Currency</option>
-                    <option value="number">Number</option>
-                    <option value="badge">Badge</option>
-                  </select>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex items-center justify-between pt-1">
-            <label className="text-[11px] text-slate-400">Show Totals Summary Row</label>
-            <input
-              type="checkbox"
-              checked={el.showTableFooter !== false}
-              onChange={(e) => update({ showTableFooter: e.target.checked })}
-              className="rounded bg-slate-900 border-slate-700 text-cyan-600"
-            />
-          </div>
-
-          <div className="pt-2 border-t border-slate-800">
-            <p className="text-[10px] text-slate-400 leading-relaxed">
-              Table conditional rules below style whole rows. Column rules still style individual cells, so you can design both row-level and field-level highlights together.
-            </p>
-          </div>
-        </div>
+      {/* Table & Data Source Properties */}
+      {el.type === 'table' && (
+        <TablePropertiesInspector
+          element={el}
+          template={template}
+          onUpdateElement={onUpdateElement}
+          onAddDataSource={onAddDataSource}
+          onOpenApiModal={onOpenApiModal}
+        />
       )}
 
       {/* Chart Specific Properties */}

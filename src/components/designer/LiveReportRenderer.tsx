@@ -7,6 +7,7 @@ import {
 } from '../../types/report';
 import { FormulaEngine } from '../../services/formulaEngine';
 import { ConditionalFormattingEngine } from '../../services/conditionalFormattingEngine';
+import { resolveElementDataSource, autoGenerateColumnsForDataSource } from '../../services/dataSourceCatalog';
 import { 
   BarChart, 
   Bar, 
@@ -251,12 +252,11 @@ export const LiveReportRenderer: React.FC<LiveReportRendererProps> = ({
       }
 
       case 'table': {
-        const cols: TableColumn[] = el.columns || [
-          { id: '1', header: 'Item / ID', field: 'order_number', width: 25, align: 'left' },
-          { id: '2', header: 'Customer', field: 'customer_name', width: 40, align: 'left' },
-          { id: '3', header: 'Category', field: 'product_category', width: 20, align: 'left' },
-          { id: '4', header: 'Revenue', field: 'gross_revenue', width: 15, align: 'right', format: 'currency', summaryType: 'sum' },
-        ];
+        const tableDs = resolveElementDataSource(template, el.dataSourceId);
+        const tableData = tableDs?.data || dataset;
+        const cols: TableColumn[] = el.columns && el.columns.length > 0
+          ? el.columns
+          : autoGenerateColumnsForDataSource(tableDs, 4);
 
         return (
           <div
@@ -270,7 +270,7 @@ export const LiveReportRenderer: React.FC<LiveReportRendererProps> = ({
                     <th
                       key={c.id}
                       style={{ width: `${c.width}%`, textAlign: c.align || 'left' }}
-                      className="p-2 text-[11px]"
+                      className={`${el.denseRows ? 'p-1.5' : 'p-2'} text-[11px]`}
                     >
                       {c.header}
                     </th>
@@ -278,18 +278,20 @@ export const LiveReportRenderer: React.FC<LiveReportRendererProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                {dataset.map((row, rIdx) => {
+                {tableData.map((row, rIdx) => {
                   const rowRuleEval =
                     el.conditionalRules && el.conditionalRules.length > 0
-                      ? ConditionalFormattingEngine.evaluateElementRules(el, row, dataset)
+                      ? ConditionalFormattingEngine.evaluateElementRules(el, row, tableData)
                       : null;
 
                   if (rowRuleEval?.isHidden) return null;
 
+                  const isStriped = el.stripedRows !== false && rIdx % 2 === 1;
+
                   return (
                   <tr
                     key={rIdx}
-                    className="transition-colors"
+                    className={`transition-colors ${!rowRuleEval?.style.backgroundColor && isStriped ? 'bg-slate-50/70' : 'bg-white'}`}
                     style={{
                       backgroundColor: rowRuleEval?.style.backgroundColor,
                       color: rowRuleEval?.style.color,
@@ -303,7 +305,7 @@ export const LiveReportRenderer: React.FC<LiveReportRendererProps> = ({
                       const formatted = FormulaEngine.formatValue(val, c.format || 'none');
                       const cellRuleEval =
                         c.conditionalRules && c.conditionalRules.length > 0
-                          ? ConditionalFormattingEngine.evaluateColumnRules(c, val, row, dataset)
+                          ? ConditionalFormattingEngine.evaluateColumnRules(c, val, row, tableData)
                           : null;
                       return (
                         <td
@@ -312,7 +314,7 @@ export const LiveReportRenderer: React.FC<LiveReportRendererProps> = ({
                             textAlign: c.align || 'left',
                             ...(cellRuleEval?.style || {}),
                           }}
-                          className="p-2 text-slate-800 truncate"
+                          className={`${el.denseRows ? 'py-1 px-2' : 'p-2'} text-slate-800 truncate`}
                         >
                           {formatted}
                         </td>
@@ -322,7 +324,7 @@ export const LiveReportRenderer: React.FC<LiveReportRendererProps> = ({
                   );
                 })}
               </tbody>
-              {cols.some((c) => c.summaryType && c.summaryType !== 'none') && (
+              {el.showTableFooter !== false && cols.some((c) => c.summaryType && c.summaryType !== 'none') && (
                 <tfoot className="bg-slate-50 font-bold border-t-2 border-slate-200 text-[11px]">
                   <tr>
                     {cols.map((c) => {
@@ -331,11 +333,11 @@ export const LiveReportRenderer: React.FC<LiveReportRendererProps> = ({
                       }
                       let sum = 0;
                       if (c.summaryType === 'sum') {
-                        sum = dataset.reduce((acc, r) => acc + (Number(r[c.field]) || 0), 0);
+                        sum = tableData.reduce((acc, r) => acc + (Number(r[c.field]) || 0), 0);
                       } else if (c.summaryType === 'avg') {
-                        sum = dataset.length > 0 ? dataset.reduce((acc, r) => acc + (Number(r[c.field]) || 0), 0) / dataset.length : 0;
+                        sum = tableData.length > 0 ? tableData.reduce((acc, r) => acc + (Number(r[c.field]) || 0), 0) / tableData.length : 0;
                       } else if (c.summaryType === 'count') {
-                        sum = dataset.length;
+                        sum = tableData.length;
                       }
                       const formatted = FormulaEngine.formatValue(sum, c.format || 'none');
                       return (
